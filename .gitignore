@@ -162,3 +162,7 @@ cython_debug/
 # IGNORE DATA
 *.fdt
 *.set
+*.csv
+
+#
+PlosOne/
