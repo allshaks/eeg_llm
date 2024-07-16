@@ -163,6 +163,7 @@ cython_debug/
 *.fdt
 *.set
 *.csv
+*.elc
 
 #
 PlosOne/
