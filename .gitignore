@@ -163,6 +163,8 @@ cython_debug/
 *.fdt
 *.set
 *.csv
+*.elc
+head_positions.txt
 
 #
 PlosOne/
