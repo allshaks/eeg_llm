@@ -72,3 +72,17 @@ for epoch in range(num_epochs):
     optim.step()
 
     print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {loss.item():.4f}")
+
+# evaluate the model 
+model.eval()
+
+with torch.no_grad():
+    predictions=model.generate(
+        past_values=batch["past_values"],
+        past_time_features=batch["past_time_features"],
+        future_time_features=batch["future_time_features"]
+    )
+
+
+# remove batch dimension of predictions 
+predicted_values = predictions.sequences.squeeze(0).numpy()
