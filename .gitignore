@@ -169,3 +169,16 @@ head_positions.txt
 #
 PlosOne/
 .DS_Store
+
+*.json
+*.pth
+*.pt
+*.bin
+logs/events.out.tfevents.1723637757.pavian.1342949.0
+logs/events.out.tfevents.1723638055.pavian.1343238.0
+logs/events.out.tfevents.1723638206.pavian.1343577.0
+logs/events.out.tfevents.1723638116.pavian.1343407.0
+logs/events.out.tfevents.1723640840.pavian.1346260.0
+logs/events.out.tfevents.1723640875.pavian.1346494.0
+logs/events.out.tfevents.1723641011.pavian.1347256.0
+results/checkpoint-3/model.safetensors
