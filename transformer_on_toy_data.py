@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader, TensorDataset
 import pandas as pd 
 
 # %%
-def generate_wave_data(num_samples=600, seq_length=100, noise=0):
+def generate_wave_data(num_samples=6000, seq_length=100, noise=0):
     data = []
 
     phase_shift_list = np.empty([0])
