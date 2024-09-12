@@ -1,4 +1,4 @@
-# %%
+# imports 
 from transformers import TimeSeriesTransformerConfig, TimeSeriesTransformerForPrediction
 import numpy as np 
 from torch.optim import Adam 
@@ -8,87 +8,87 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, TensorDataset
 import pandas as pd 
 
-# %%
-def generate_wave_data(num_samples=6000, seq_length=100, noise=0):
-    data = []
 
-    phase_shift_list = np.empty([0])
-
-    for _ in range(num_samples):
-        phase_shift = np.random.uniform(-20, 20)
-        w = 1 # + np.random.randn(1)*0.01
-        t = np.linspace(0, 4*np.pi, seq_length) + phase_shift 
-
-        phase_shift_list = np.append(phase_shift_list, phase_shift)
-
-        sine = np.sin(w*t) + noise * np.random.randn(seq_length)
-        cosine = np.cos(w*t) + noise * np.random.randn(seq_length)
-
-        sample = np.stack([sine, cosine], axis=1)
-        data.append(sample)
-    data = np.array(data)
-    return data, phase_shift_list
-
-# %%
 def gaussian(t, mean, std):
+    """
+    Computes the Gaussian (normal distribution) value for each point in time.
+
+    Parameters:
+    t (array-like): The input time points at which to evaluate the Gaussian function.
+    mean (float): The mean (center) of the Gaussian distribution.
+    std (float): The standard deviation (spread or width) of the Gaussian distribution.
+
+    Returns:
+    ndarray: A 1D array of shape (t,)
+    """
+    
     return 1/np.sqrt(2*np.pi*std**2)*np.exp(-(t-mean)**2/(2*std**2))
 
-# %%
-def generate_pulse_data(num_samples=6000, seq_length=100, noise=1):
-    data = []
 
-    phase_shift_list = np.empty([0])
+def generate_pulse_data(num_samples=6000, seq_length=100, noise=1):
+    """
+    Generates synthetic pulse data with time-shifted Gaussian pulses and random noise.
+
+    Parameters:
+    num_samples (int): The number of pulse samples to generate. Each sample contains two pulses. Default is 6000.
+    seq_length (int): The number of time points in each pulse sequence. Default is 100.
+    noise (float): The standard deviation of the noise added to the pulse amplitudes. Default is 1.
+
+    Returns:
+    ndarray: A 3D array of shape (num_samples, seq_length, 2)
+    """
+
+    data = []
 
     for _ in range(num_samples):
         phase_shift = np.random.randn(1)
         w = 1 # + np.random.randn(1)*0.01
         t = np.linspace(0, 5, seq_length) + phase_shift
 
-        phase_shift_list = np.append(phase_shift_list, phase_shift) 
         pulse1 = gaussian(t, 1, 0.3) + noise * np.random.randn(seq_length)
         pulse2 = gaussian(t, 2, 0.3) + noise * np.random.randn(seq_length)
 
         sample = np.stack([pulse1, pulse2], axis=1)
         data.append(sample)
     data = np.array(data)
-    return data, phase_shift_list
+    return data
 
-# %%
-# generate toy data  
-# data, _ = generate_wave_data()
-data, _ = generate_pulse_data()
 
-# %%
-# plot a sample to inspect the level of noise 
-s = 30
-plt.figure(figsize=(10, 5))
-plt.plot(data[s, :, 0], label="Noisy Sine")
-plt.plot(data[s, :, 1], label="Noisy Cosine")
-plt.legend()
-plt.savefig("Noisy_wave_data.png")
-plt.clf()
-
-# %%
-# plot the average to see that the clean signal can be recovered 
-data_avg = np.mean(data, axis=0) 
-plt.figure(figsize=(10, 5))
-plt.plot(data_avg[:, 0], label="Sine")
-plt.plot(data_avg[:, 1], label="Cosine")
-plt.legend()
-plt.savefig("Average.png")
-plt.clf()
-
-# %%
 def split_data(data, test_size=0.2, random_state=None):
+    """
+    Splits the input data into training and testing set.
+
+    Parameters:
+    data (array-like): The input data to be split.
+    test_size (float): The proportion of the data to include in the test split. Default is 0.2.
+    random_state (int, optional): Controls the shuffling applied to the data before the split. Pass an integer for reproducible results.
+
+    Returns:
+    tuple: A tuple containing:
+        - X_train (array-like): A 3D array of shape (num_samples - test_size * num_samples, seq_length, 2).
+        - y (array-like): A 3D array of shape (test_size * num_samples, seq_length, 2).
+    """
+
     X_train, y = train_test_split(data, test_size=test_size, random_state=random_state)
     return X_train, y
 
-# %%
-# split the data into training and test set 
-X_train, y = split_data(data, random_state=42)
 
-# %%
 def create_data_loaders(X_train, X_test, batch_size=16, shuffle=True):
+    """
+    Converts training and testing data into PyTorch DataLoader objects.
+
+    Parameters:
+    X_train (array-like): The training data to be converted into a DataLoader.
+    X_test (array-like): The test data to be converted into a DataLoader.
+    batch_size (int): The number of samples per batch to load. Default is 16.
+    shuffle (bool): Whether to shuffle the training data at every epoch. Default is True.
+
+    Returns:
+    tuple: A tuple containing:
+        - train_loader (DataLoader): DataLoader for the training data.
+        - test_loader (DataLoader): DataLoader for the test data (shuffling disabled).
+    """
+    
     X_train = torch.tensor(X_train, dtype=torch.float32)
     X_test = torch.tensor(X_test, dtype=torch.float32)
     train_dataset = TensorDataset(X_train)
@@ -99,302 +99,209 @@ def create_data_loaders(X_train, X_test, batch_size=16, shuffle=True):
 
     return train_loader, test_loader 
 
-# %%
-# batch the data 
-train_loader, test_loader = create_data_loaders(X_train, y)
 
-# %%
 def split_past_future(batch, num_future_points=10):
+    """
+    Splits a batch of time series data into past and future segments.
+
+    Parameters:
+    batch (ndarray): A batch of time series data of shape (batch_size, sequence_length, num_features).
+    num_future_points (int): The number of future time points to separate from the past. Default is 10.
+
+    Returns:
+    tuple: A tuple containing:
+        - past_values (ndarray): The past segment of the data, with shape (batch_size, sequence_length - num_future_points, num_features).
+        - future_values (ndarray): The future segment of the data, with shape (batch_size, num_future_points, num_features).
+    
+    """
+
     past_values = batch[:, :-num_future_points, :]
     future_values = batch[:, -num_future_points:, :]
     return past_values, future_values
 
-# %%
-# define the configuration of the model 
-config = TimeSeriesTransformerConfig(
-    prediction_length=70,  # length of the future values to predict
-    context_length=29,  # length of the past values to use
-    num_time_features=1, # number of time features
-    encoder_layers=2,  # number of transformer layers in the encoder
-    decoder_layers=2,  # number of transformer layers in the decoder
-    d_model=32,  # dimension of the model
-    n_heads=4,  # number of attention heads
-    input_size=2, # size of the input 
-    lags_sequence=[1], # sequence of lags 
-    distribution_output='normal', # distribution where the output is sampled from
+
+def train_model(model, train_loader, num_future_points=70, num_epochs=20, learning_rate=1e-3):
+    """
+    Trains the model using the provided training data loader.
+
+    Parameters:
+    model (torch.nn.Module): The model to be trained.
+    train_loader (DataLoader): The DataLoader providing batches of training data.
+    num_future_points (int): The number of future time steps the model will predict. Default is 70.
+    num_epochs (int): The number of training epochs. Default is 20.
+    learning_rate (float): The learning rate for the optimizer. Default is 1e-3.
+
+    Returns:
+    list: A list of parameters (scale and location) for each epoch.
+    """
+    # Initialize optimizer
+    optim = Adam(model.parameters(), lr=learning_rate)
+    
+    # Store parameters across epochs
+    params_lst = []
+
+    # Iterate over all epochs
+    for epoch in range(num_epochs):
+        model.train()  # Set the model to training mode
+        total_loss = 0.0  # Initialize total loss for the epoch
+        epoch_params = []  # Store parameters for the current epoch
+
+        # Iterate over each batch in the training data
+        for batch in train_loader:
+            past_values, future_values = split_past_future(batch[0], num_future_points=num_future_points)
+
+            # Prepare batch data for model input
+            batch = {
+                "past_values": past_values,  # (batch_size, input_length, input_size)
+                "future_values": future_values,  # (batch_size, prediction_length, input_size)
+                "past_time_features": torch.arange(past_values.size(1)).unsqueeze(0).unsqueeze(2).float().repeat(past_values.size(0), 1, 1),  # (batch_size, seq_length, 1)
+                "past_observed_mask": torch.ones_like(past_values),  # (batch_size, seq_length, input_size)
+                "future_observed_mask": torch.ones_like(future_values),  # (batch_size, prediction_length, input_size)
+                "future_time_features": torch.arange(past_values.size(1), past_values.size(1) + num_future_points).unsqueeze(0).unsqueeze(2).float().repeat(future_values.size(0), 1, 1),  # (batch_size, prediction_length, 1)
+                "return_dict": True
+            }
+
+            # Forward pass through the model
+            outputs = model(
+                past_values=batch["past_values"],
+                past_time_features=batch["past_time_features"],
+                past_observed_mask=batch["past_observed_mask"],
+                future_observed_mask=batch["future_observed_mask"],
+                future_values=batch["future_values"],
+                future_time_features=batch["future_time_features"],
+                return_dict=batch["return_dict"]
+            )
+
+            loss = outputs.loss
+            scale = outputs.scale
+            loc = outputs.loc
+
+            # Calculate parameters from model outputs
+            params = (scale * outputs.params[0] + loc, scale * outputs.params[1])
+            epoch_params.append(params)
+
+            # Backward pass and optimization step
+            optim.zero_grad()
+            loss.backward()
+            optim.step()
+
+            total_loss += loss.item()  # Accumulate total loss
+
+        params_lst.append(epoch_params)  # Store parameters for the epoch
+        epoch_loss = total_loss / len(train_loader)  # Calculate average loss for the epoch
+        print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss:.4f}")
+
+    return params_lst
+
+
+def create_model_config(prediction_length=70, context_length=29, num_time_features=1, 
+                        encoder_layers=2, decoder_layers=2, d_model=32, n_heads=4, 
+                        input_size=2, lags_sequence=[1], distribution_output='normal'):
+    """
+    Creates a configuration for a Time Series Transformer model.
+
+    Parameters:
+    prediction_length (int): The number of future time steps the model will predict. Default is 70.
+    context_length (int): The number of past time steps used as context. Default is 29.
+    num_time_features (int): The number of time features used as input. Default is 1.
+    encoder_layers (int): The number of transformer layers in the encoder. Default is 2.
+    decoder_layers (int): The number of transformer layers in the decoder. Default is 2.
+    d_model (int): The dimensionality of the transformer model. Default is 32.
+    n_heads (int): The number of attention heads in the multi-head attention mechanism. Default is 4.
+    input_size (int): The size of the input to the model (number of features per time step). Default is 2.
+    lags_sequence (list): A list of lags to be used in the model. Default is [1].
+    distribution_output (str): The type of distribution for the output. Default is 'normal'.
+
+    Returns:
+    TimeSeriesTransformerConfig: The configuration object for the Time Series Transformer model.
+    """
+    config = TimeSeriesTransformerConfig(
+        prediction_length=prediction_length,
+        context_length=context_length,
+        num_time_features=num_time_features,
+        encoder_layers=encoder_layers,
+        decoder_layers=decoder_layers,
+        d_model=d_model,
+        n_heads=n_heads,
+        input_size=input_size,
+        lags_sequence=lags_sequence,
+        distribution_output=distribution_output,
     )
+    return config
 
-# initialize the model 
-model = TimeSeriesTransformerForPrediction(config)
 
-# %%
-# define the prediciton lenght
-num_future_points = 70
-# Initialize optimizer
-optim = Adam(model.parameters(), lr=1e-3)
-# store the params 
-params_lst = []
-# Define the number of epochs 
-num_epochs = 20
+def generate_predictions(model, test_loader, prediction_length=70):
+    """
+    Generates predictions for each batch in the test loader using a trained time series model.
 
-# iterate over all epochs 
-for epoch in range(num_epochs):
-    model.train()
-    total_loss = 0.0 
-    epoch_params = []
+    Parameters:
+    model (torch.nn.Module): The trained model used to generate predictions.
+    test_loader (DataLoader): DataLoader providing batches of test data.
+    prediction_length (int): The number of future time steps to predict. Default is 70.
 
-    # iterate over each batch 
-    for batch in train_loader: 
-        past_values, future_values = split_past_future(batch[0], num_future_points=num_future_points)
+    Returns:
+    list: A list of generated predictions for each batch in the test data.
+    
+    """
+    generated_predictions = []
 
+    # Iterate over each batch in the test loader
+    for batch in test_loader:
+        # Split the batch into past and future values
+        past_values, future_values = split_past_future(batch[0], num_future_points=prediction_length)
+
+        # Prepare batch input data
         batch = {
             "past_values": past_values,  # (batch_size, input_length, input_size)
             "future_values": future_values,  # (batch_size, prediction_length, input_size)
             "past_time_features": torch.arange(past_values.size(1)).unsqueeze(0).unsqueeze(2).float().repeat(past_values.size(0), 1, 1),  # (batch_size, seq_length, 1)
             "past_observed_mask": torch.ones_like(past_values),  # (batch_size, seq_length, input_size)
-            "future_observed_mask": torch.ones_like(future_values), # (batch_size, prediciton_lenght, input_size)
-            "future_time_features": torch.arange(past_values.size(1), past_values.size(1) + num_future_points).unsqueeze(0).unsqueeze(2).float().repeat(future_values.size(0), 1, 1),  # (batch_size, prediction_length, 1)
-            "return_dict": True
+            "future_time_features": torch.arange(past_values.size(1), past_values.size(1) + prediction_length).unsqueeze(0).unsqueeze(2).float().repeat(future_values.size(0), 1, 1),  # (batch_size, prediction_length, 1)
         }
 
-        # Forward pass
-        outputs = model(
-            past_values=batch["past_values"],
-            past_time_features=batch["past_time_features"],
-            past_observed_mask=batch["past_observed_mask"],
-            future_observed_mask=batch["future_observed_mask"],
-            future_values=batch["future_values"],
-            future_time_features=batch["future_time_features"],
-            return_dict=batch["return_dict"]
-        )
+        # Set model to evaluation mode
+        model.eval()
 
-        loss = outputs.loss
-        scale = outputs.scale
-        loc = outputs.loc
+        # Generate predictions without gradient calculation
+        with torch.no_grad():
+            predictions = model.generate(
+                past_values=batch["past_values"],
+                past_time_features=batch["past_time_features"],
+                future_time_features=batch["future_time_features"],
+                past_observed_mask=batch["past_observed_mask"],
+            )
 
-        params = (scale * outputs.params[0] + loc, scale * outputs.params[1])
-        epoch_params.append(params)
+        # Collect the generated predictions
+        generated_batch_predictions = predictions.sequences
 
-        # Backward pass
-        optim.zero_grad()
-        loss.backward()
-        optim.step()
+        # Optional: only append if batch size matches 16
+        if generated_batch_predictions.shape[0] == 16:
+            generated_predictions.append(generated_batch_predictions)
 
-        total_loss += loss.item()
-    params_lst.append(epoch_params)
-    # params_lst.append(epoch_params)
-    epoch_loss = total_loss / len(train_loader)
-    print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss:.4f}")
-
-# %%
-epoch_dict = np.array([
-    [{"mu_sine": 0, "sigma_sine": 0, "mu_cosine": 0, "sigma_cosine": 0}
-     for _ in range(len(params_lst[0][0][0][0]))]
-    for _ in range(len(params_lst))
-])
-num_batches = len(params_lst[0])
-
-
-for i, epoch in enumerate(params_lst):
-    #prediction_dict = np.full(len(params_lst[0][0][0][0]))
-
-    for j, batch in enumerate(epoch): 
-        mean = batch[0]
-        std_dev = batch[1]
-
-        for time_point in range(mean.size(1)):
-            
-
-            mu_sine = mean[:, time_point, 0].detach().numpy()
-            sigma_sine = std_dev[:, time_point, 0].detach().numpy()
-            mu_cosine = mean[:, time_point, 1].detach().numpy()
-            sigma_cosine = std_dev[:, time_point, 1].detach().numpy()
-
-            epoch_dict[i,time_point]["mu_sine"] += np.mean(mu_sine)
-            epoch_dict[i,time_point]["sigma_sine"] += np.mean(sigma_sine)
-            epoch_dict[i,time_point]["mu_cosine"] += np.mean(mu_cosine)
-            epoch_dict[i,time_point]["sigma_cosine"] += np.mean(sigma_cosine)
-
-    for time_point in range(len(epoch_dict[i])):
-        epoch_dict[i,time_point]["mu_sine"] /= num_batches
-        epoch_dict[i,time_point]["sigma_sine"] /= num_batches
-        epoch_dict[i,time_point]["mu_cosine"] /= num_batches
-        epoch_dict[i,time_point]["sigma_cosine"] /= num_batches
-
-
-# %%
-epoch_df = pd.DataFrame(epoch_dict.tolist())
-
-# %%
-time_point = 9
-x_ep = [i for i in range(num_epochs)]
-sine_mu_across_epochs = epoch_df[time_point].apply(lambda x: x["mu_sine"]).values 
-sine_sigma_across_epochs = epoch_df[time_point].apply(lambda x: x["sigma_sine"]).values
-cosine_mu_across_epochs = epoch_df[time_point].apply(lambda x: x["mu_cosine"]).values
-cosine_sigma_across_epochs = epoch_df[time_point].apply(lambda x: x["sigma_cosine"]).values
-
-
-# %%
-plt.figure(figsize=(10, 5))
-plt.plot(x_ep, sine_mu_across_epochs, label="Sine Mean", color='blue')
-plt.plot(x_ep, cosine_mu_across_epochs, label="Cosine Mean", color="yellow")
-
-plt.fill_between(x_ep, 
-                 [m - s for m, s in zip(sine_mu_across_epochs, sine_sigma_across_epochs)],
-                 [m + s for m, s in zip(sine_mu_across_epochs, sine_sigma_across_epochs)], 
-                color='orange', 
-                alpha=0.2,
-)
-plt.fill_between(x_ep, 
-                 [m - s for m, s in zip(cosine_mu_across_epochs, cosine_sigma_across_epochs)],
-                 [m + s for m, s in zip(cosine_mu_across_epochs, cosine_sigma_across_epochs)], 
-                color='purple', 
-                alpha=0.2,
-)
-plt.legend()
-plt.savefig("Mu_across_epochs.png")
-plt.clf()
-
-# %%
-ep = 19
-samples = epoch_df.shape[1]
-t = [i for i in range(samples)]
-sine_mu_across_samples = epoch_df.loc[ep, :].apply(lambda x: x["mu_sine"]).values 
-sine_sigma_across_samples = epoch_df.loc[ep, :].apply(lambda x: x["sigma_sine"]).values
-cosine_mu_across_samples = epoch_df.loc[ep, :].apply(lambda x: x["mu_cosine"]).values
-cosine_sigma_across_samples = epoch_df.loc[ep, :].apply(lambda x: x["sigma_sine"]).values
-
-# %%
-plt.figure(figsize=(10, 5))
-plt.plot(t, sine_mu_across_samples, label="Sine Mean", color='blue')
-plt.plot(t, cosine_mu_across_samples, label="Cosine Mean", color="yellow")
-
-# # plt.fill_between(t, 
-#                  [m - s for m, s in zip(sine_mu_across_samples, sine_sigma_across_samples)],
-#                  [m + s for m, s in zip(sine_mu_across_samples, sine_sigma_across_samples)], 
-#                 color='orange', 
-#                 alpha=0.2,
-# )
-# # plt.fill_between(t, 
-#                  [m - s for m, s in zip(cosine_mu_across_samples, cosine_sigma_across_samples)],
-#                  [m + s for m, s in zip(cosine_mu_across_samples, cosine_sigma_across_samples)], 
-#                 color='purple', 
-#                 alpha=0.2,
-# )
-plt.legend()
-plt.savefig("Mu_across_samples.png")
-plt.clf()
-
-# %%
-# define the prediction length for testing 
-prediciton_length = 70
-generated_predicitons = []
-
-# iterate over each batch 
-for batch in test_loader:
-
-    past_values, future_values = split_past_future(batch[0], num_future_points=prediciton_length)
-
-    batch = {
-            "past_values": past_values,  # (batch_size, input_length, input_size)
-            "future_values": future_values,  # (batch_size, prediction_length, input_size)
-            "past_time_features": torch.arange(past_values.size(1)).unsqueeze(0).unsqueeze(2).float().repeat(past_values.size(0), 1, 1),  # (batch_size, seq_length, 1)
-            "past_observed_mask": torch.ones_like(past_values),  # (batch_size, seq_length, input_size)
-            "future_time_features": torch.arange(past_values.size(1), past_values.size(1) + num_future_points).unsqueeze(0).unsqueeze(2).float().repeat(future_values.size(0), 1, 1),  # (batch_size, prediction_length, 1)
-        }
-    
-    # set the model to evaluation mode  
-    model.eval()
-
-    # create predicitons 
-    with torch.no_grad():
-        predictions=model.generate(
-            past_values=batch["past_values"],
-            past_time_features=batch["past_time_features"],
-            future_time_features=batch["future_time_features"], 
-            past_observed_mask=batch["past_observed_mask"], 
-        )
-
-    generated_batch_predictions = predictions.sequences
-    if generated_batch_predictions.shape[0] == 16:
-        generated_predicitons.append(generated_batch_predictions)
-
-# %%
-def mean_squared_error(y_true, y_pred):
-    return np.mean((y_true - y_pred) ** 2)
-
-# %%
-generated_predicitons = np.array(generated_predicitons)
-num_batches = generated_predicitons.shape[0]
-batch_size = generated_predicitons.shape[1]
-samples = generated_predicitons.shape[2]
-seq_length = generated_predicitons.shape[3]
-input_size = generated_predicitons.shape[4]
-
-generated_predicitons = generated_predicitons.reshape(num_batches * batch_size, samples, seq_length, input_size)
-
-# %%
-sample = 10 
-mean_over_obsv = np.mean(generated_predicitons, axis=0)
-
-# %%
-pred_mean = np.mean(generated_predicitons, axis=1)
-grand_mean = np.mean(mean_over_obsv, axis=0)
-
-# %%
-generated_predicitons.shape
-
-# %%
-grand_mean.shape
-
-# %%
-# define observation you want to examine 
-pred = 60
-pl = 70
-sample = 40
-# Plot the best predictions
-plt.figure(figsize=(10, 6))
-
-# Plot the average past values
-plt.plot(np.arange(len(data_avg[:-pl])), data_avg[:-pl, 0], label="Average of the past sine values")
-plt.plot(np.arange(len(data_avg[:-pl])), data_avg[:-pl, 1], label="Average of the past cosine values")
-
-# plot average over observations 
-# plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), mean_over_obsv[sample, :, 0], label="Average of observations", linestyle="dotted")
-# plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), mean_over_obsv[sample, :, 1], label="Average of observations", linestyle="dotted")
-
-
-# Plot the past values of the observation 
-# plt.plot(np.arange(len(data_avg[:-pl])), y[pred, :-pl, 0], label=f"Past sine values")
-# plt.plot(np.arange(len(data_avg[:-pl])), y[pred, :-pl, 1], label=f"Past cosine values")
-
-# Plot true future values
-plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), data_avg[-pl:, 0], label="Average of future sine values", linestyle='dashed')
-plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), data_avg[-pl:, 1], label="Average of future cosine values", linestyle='dashed')
-
-# Plot the grand mean 
-# plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), grand_mean[-pl:, 0], label="Grand mean", linestyle='dashed')
-# plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), grand_mean[-pl:, 1], label="Grand mean", linestyle='dashed')
-
-# Plot predicted future values of one sampled observation 
-# plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), generated_predicitons[pred, sample, :, 0], label=f"Predicted Sine Values of {pred + 1}th observation", linestyle='dotted')
-# plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), generated_predicitons[pred, sample, :, 1], label=f"Predicted Cosine Values of {pred + 1}th observation", linestyle='dotted')
-
-# Plot the mean prediction 
-# plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), pred_mean[pred, :, 0], label="Average of samples for sine")
-# plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), pred_mean[pred, :, 1], label="Average of samples for cosine")
-
-# Plot the mean over epochs 
-plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), sine_mu_across_samples, label="Mean over epochs", linestyle="dotted")
-plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), cosine_mu_across_samples, label="Mean over epochs", linestyle="dotted")
-
-
-plt.legend(loc='upper right')
-plt.savefig("Predicitons.png")
-plt.clf()
-
-
-# %%
+    return generated_predictions
 
 
 
+# generate pulse data 
+data = generate_pulse_data()
+
+# split the data into training and test set 
+X_train, y = split_data(data, random_state=42)
+
+# create training and test loader, batch the data 
+train_loader, test_loader = create_data_loaders(X_train, y)
+
+# define the configuration of the model 
+config = create_model_config(prediction_length=70, context_length=29, d_model=64, n_heads=8)
+
+# initialize the model 
+model = TimeSeriesTransformerForPrediction(config)
+
+# train the model
+params = train_model(model, train_loader, num_future_points=70, num_epochs=20, learning_rate=1e-3)
+
+# save the model 
+model.save_pretrained("./saved_model")
+
+# generate predictions 
+predictions = generate_predictions(model, test_loader, prediction_length=70)
