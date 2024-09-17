@@ -16,7 +16,7 @@
 #
 # only gpu nodes
 # kind of gpu (a100 is the name, 1 is the number of gpus you request, in this case we don't use more)
-#
+# --gres=gpu:a100:1
 # if I want to receive notification. "end" means sends notification _to_ the email. you can also set it to "none".
 #SBATCH --mail-type=end
 #SBATCH --mail-user=kammnoel1@gmail.com

@@ -9,6 +9,16 @@ from torch.utils.data import DataLoader, TensorDataset
 import pandas as pd 
 
 
+# define global variables 
+RANDOM_STATE = 42
+PREDICTION_LENGTH = 70
+CONTEXT_LENGTH = 29
+D_MODEL = 64
+N_HEADS = 8
+NUM_EPOCHS = 20 
+LEARNING_RATE = 1e-3
+
+
 def gaussian(t, mean, std):
     """
     Computes the Gaussian (normal distribution) value for each point in time.
@@ -230,6 +240,117 @@ def create_model_config(prediction_length=70, context_length=29, num_time_featur
     return config
 
 
+
+def arrange_params(params_lst):
+    """
+    Processes epoch data and calculates mean and standard deviation of pulse1 and pulse2 for each time point.
+
+    This function iterates over each epoch and batch, computes the means and standard deviations of `pulse1` and 
+    `pulse2` for each time point, and stores them in a dictionary. Finally, it averages the values over the number 
+    of batches.
+
+    Args:
+        params_lst (list): A nested list where each element corresponds to an epoch, containing a batch. Each batch
+                           contains two arrays, one for means and one for standard deviations, with pulse1 and pulse2
+                           data across time points.
+
+    Returns:
+        np.ndarray: A numpy array of dictionaries, where each dictionary contains the average `mu_pulse1`, 
+                    `sigma_pulse1`, `mu_pulse2`, and `sigma_pulse2` for each time point.
+    """
+    # Initialize the result dictionary for storing pulse1 and pulse2 data for each time point.
+    num_epochs = len(params_lst)
+    num_time_points = len(params_lst[0][0][0][0])
+    epoch_dict = np.array([
+        [{"mu_pulse1": 0, "sigma_pulse1": 0, "mu_pulse2": 0, "sigma_pulse2": 0}
+         for _ in range(num_time_points)]
+        for _ in range(num_epochs)
+    ])
+    num_batches = len(params_lst[0])
+
+    # Iterate through each epoch and batch to calculate the means and standard deviations
+    for i, epoch in enumerate(params_lst):
+        for batch in epoch:
+            mean, std_dev = batch[0], batch[1]
+
+            # Update the epoch dictionary for each time point
+            for time_point in range(mean.shape[1]):
+                mu_pulse1 = mean[:, time_point, 0].detach().numpy()
+                sigma_pulse1 = std_dev[:, time_point, 0].detach().numpy()
+                mu_pulse2 = mean[:, time_point, 1].detach().numpy()
+                sigma_pulse2 = std_dev[:, time_point, 1].detach().numpy()
+
+                # Accumulate values
+                epoch_dict[i, time_point]["mu_pulse1"] += np.mean(mu_pulse1)
+                epoch_dict[i, time_point]["sigma_pulse1"] += np.mean(sigma_pulse1)
+                epoch_dict[i, time_point]["mu_pulse2"] += np.mean(mu_pulse2)
+                epoch_dict[i, time_point]["sigma_pulse2"] += np.mean(sigma_pulse2)
+
+        # Average the accumulated values over the number of batches
+        for time_point in epoch_dict[i]:
+            time_point["mu_pulse1"] /= num_batches
+            time_point["sigma_pulse1"] /= num_batches
+            time_point["mu_pulse2"] /= num_batches
+            time_point["sigma_pulse2"] /= num_batches
+
+    return pd.DataFrame(epoch_dict.tolist())
+
+
+def plot_pulse_mus(epoch_df, ep=NUM_EPOCHS-1, save_path="mu_over_timepoints.png", plot_sigma=True):
+    """
+    Plots the mean and standard deviation of pulse1 and pulse2 across samples for a specified epoch,
+    and saves the plot as an image file.
+
+    Args:
+        epoch_df (pd.DataFrame): A DataFrame containing the pulse data across epochs and samples.
+        ep (int): The epoch to plot (default is the last epoch).
+        save_path (str): The path where the plot will be saved (default is 'pulse_plot.png').
+
+    Returns:
+        None
+    """
+
+    samples = epoch_df.shape[1]
+    t = np.arange(samples)  
+    
+    # Extract mean and sigma values for pulse1 and pulse2 across samples
+    pulse1_mus = epoch_df.loc[ep, :].apply(lambda x: x["mu_pulse1"]).values
+    pulse1_sigmas = epoch_df.loc[ep, :].apply(lambda x: x["sigma_pulse1"]).values
+    pulse2_mus = epoch_df.loc[ep, :].apply(lambda x: x["mu_pulse2"]).values
+    pulse2_sigmas = epoch_df.loc[ep, :].apply(lambda x: x["sigma_pulse2"]).values
+
+    # Plot pulse1 data
+    plt.figure()
+    plt.plot(t, pulse1_mus, label="Pulse1 Mean")
+    if plot_sigma:
+        plt.fill_between(t, 
+                        pulse1_mus - pulse1_sigmas, 
+                        pulse1_mus + pulse1_sigmas, 
+                        alpha=0.3, label="Pulse1 Sigma")
+    
+    # Plot pulse2 data
+    plt.plot(t, pulse2_mus, label="Pulse2 Mean")
+    if plot_sigma:
+        plt.fill_between(t, 
+                        pulse2_mus - pulse2_sigmas, 
+                        pulse2_mus + pulse2_sigmas, 
+                        alpha=0.3, label="Pulse2 Sigma")
+
+    # Add labels, legend, and title
+    plt.xlabel('Sample')
+    plt.ylabel('Mean ± Sigma')
+    plt.title(f'Pulse1 and Pulse2 Means and Sigmas for Epoch {ep}')
+    plt.legend()
+
+    # Save the plot
+    plt.savefig(save_path)
+
+    # Clear the figure to avoid memory issues
+    plt.close()
+
+    return pulse1_mus, pulse2_mus
+
+
 def generate_predictions(model, test_loader, prediction_length=70):
     """
     Generates predictions for each batch in the test loader using a trained time series model.
@@ -278,7 +399,70 @@ def generate_predictions(model, test_loader, prediction_length=70):
         if generated_batch_predictions.shape[0] == 16:
             generated_predictions.append(generated_batch_predictions)
 
-    return generated_predictions
+    return np.array(generated_predictions)
+
+
+def plot_preds_vs_avg(data_avg, generated_predictions, pl=PREDICTION_LENGTH, plt_grand_mean=True, plt_pulse_mus=True, save_path='preds_vs_avg.png'):
+    """
+    Plots the comparison between predicted and actual values for a specified observation and sample,
+    alongside statistical averages (mean over epochs and overall grand mean).
+
+    Args:
+        data_avg (np.ndarray): The average data values for past and future sine/cosine values.
+        generated_predictions (np.ndarray): Generated prediction values of shape (num_batches, batch_size, samples, seq_length, input_size).
+        pl (int): The prediction length (number of future time steps to plot, default is 70).
+        plt_grand_mean (bool): Plot mean over predictions and samples (default is True).
+        plt_pulse_mus (bool): Plot model parameter mu of a specified epoch (default is True).
+    
+    Returns:
+        None
+    """
+    # Reshape and calculate the means over different dimensions
+    num_batches, batch_size, samples, seq_length, input_size = generated_predictions.shape
+    generated_predictions = generated_predictions.reshape(num_batches * batch_size, samples, seq_length, input_size)
+
+    # get the mean over all predictions 
+    mean_over_preds = np.mean(generated_predictions, axis=0)
+    
+    # get the mean over all samples 
+    mean_over_sampels = np.mean(generated_predictions, axis=1)
+
+    # get the mean over all predictions and all samples 
+    grand_mean = np.mean(mean_over_preds, axis=0)
+
+    # Plot settings
+    plt.figure(figsize=(10, 6))
+
+    # Plot the average past values
+    plt.plot(np.arange(len(data_avg[:-pl])), data_avg[:-pl, 0], label="Average of the past values")
+    plt.plot(np.arange(len(data_avg[:-pl])), data_avg[:-pl, 1], label="Average of the past values")
+
+    # Plot the average future values
+    plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), data_avg[-pl:, 0], label="Average of future values", linestyle='dashed')
+    plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), data_avg[-pl:, 1], label="Average of future values", linestyle='dashed')
+
+    if plt_grand_mean:
+        # Plot the mean over all predictions and all samples 
+        plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), grand_mean[:, 0], label="Mean over predictions and samples", linestyle="dotted")
+        plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), grand_mean[:, 1], label="Mean over predictions and samples", linestyle="dotted")
+    
+    if plt_pulse_mus:
+        # Plot the model parameter mu of a specified epoch 
+        plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), pulse1_mus, label="Model parameter mu", linestyle="dotted")
+        plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), pulse2_mus, label="Model parameter mu", linestyle="dotted")
+
+    # Add labels, legend, and title
+    plt.xlabel('Timepoints')
+    plt.ylabel('Values')
+    plt.title(f'Average data against prediction')
+    plt.legend(loc='upper right')
+
+    # Save the plot
+    plt.savefig(save_path)
+
+    # Clear the figure to avoid memory issues
+    plt.close()
+
 
 
 
@@ -286,22 +470,32 @@ def generate_predictions(model, test_loader, prediction_length=70):
 data = generate_pulse_data()
 
 # split the data into training and test set 
-X_train, y = split_data(data, random_state=42)
+X_train, y = split_data(data, random_state=RANDOM_STATE)
 
 # create training and test loader, batch the data 
 train_loader, test_loader = create_data_loaders(X_train, y)
 
 # define the configuration of the model 
-config = create_model_config(prediction_length=70, context_length=29, d_model=64, n_heads=8)
+config = create_model_config(prediction_length=PREDICTION_LENGTH, context_length=CONTEXT_LENGTH, d_model=D_MODEL, n_heads=N_HEADS)
 
 # initialize the model 
 model = TimeSeriesTransformerForPrediction(config)
 
 # train the model
-params = train_model(model, train_loader, num_future_points=70, num_epochs=20, learning_rate=1e-3)
+params = train_model(model, train_loader, num_future_points=PREDICTION_LENGTH, num_epochs=NUM_EPOCHS, learning_rate=LEARNING_RATE)
 
 # save the model 
 model.save_pretrained("./saved_model")
 
+# arrange the parameters in a pd
+params_df = arrange_params(params)
+
+# plot mu over time points of specified epoch 
+pulse1_mus, pulse2_mus = plot_pulse_mus(params_df)
+
 # generate predictions 
-predictions = generate_predictions(model, test_loader, prediction_length=70)
+predictions = generate_predictions(model, test_loader, prediction_length=PREDICTION_LENGTH)
+
+# plot average data against average of samples 
+plot_preds_vs_avg(predictions, pulse1_mus, pulse2_mus) 
+
