@@ -1,3 +1,4 @@
+
 # imports 
 from transformers import TimeSeriesTransformerConfig, TimeSeriesTransformerForPrediction
 import numpy as np 
@@ -10,13 +11,29 @@ import pandas as pd
 
 
 # define global variables 
-RANDOM_STATE = 42
-PREDICTION_LENGTH = 70
-CONTEXT_LENGTH = 29
-D_MODEL = 64
-N_HEADS = 8
-NUM_EPOCHS = 20 
-LEARNING_RATE = 1e-3
+NUM_OBSV = 1000                     # number of generated observations  
+SEQ_LEN = 100                       # length of the sequence 
+NOISE = 1                           # level of noise 
+MEAN1 = 1                           # mean of the first pulse 
+STD1 = 0.3                          # standard deviation of the first pulse 
+MEAN2 = 2                           # mean of the second pulse 
+STD2 = 0.3                          # standard deviation of the second pulse 
+TEST_SIZE = 0.2                     # size of the test set 
+BATCH_SIZE = 16                     # batch size 
+RANDOM_STATE = 42                   # random initialization for reproducability 
+PRED_LENGTH = 10                    # length of the prediction 
+CONTEXT_LENGTH = 89                 # length of the context window 
+NUM_TIME_FEAT = 1                   # number of time features 
+ENC_LAYERS = 2                      # number of encoding layers 
+DEC_LAYERS = 2                      # number of decoding layers 
+INPUT_FEAT = 2                      # number of input features 
+LAG_SEQ = [1]                       # lag sequence 
+D_MODEL = 64                        # dimension of the model 
+N_HEADS = 8                         # number of attention heads
+DISTR = 'normal'                    # output distribution  
+NUM_SAMPLES = 10                    # number of parallel generated samples 
+NUM_EPOCHS = 20                     # number of epochs 
+LEARNING_RATE = 1e-3                # learning rate 
 
 
 def gaussian(t, mean, std):
@@ -35,14 +52,15 @@ def gaussian(t, mean, std):
     return 1/np.sqrt(2*np.pi*std**2)*np.exp(-(t-mean)**2/(2*std**2))
 
 
-def generate_pulse_data(num_samples=6000, seq_length=100, noise=1):
+
+def generate_pulse_data(num_samples=NUM_OBSV, seq_len=SEQ_LEN, noise=NOISE):
     """
     Generates synthetic pulse data with time-shifted Gaussian pulses and random noise.
 
     Parameters:
-    num_samples (int): The number of pulse samples to generate. Each sample contains two pulses. Default is 6000.
-    seq_length (int): The number of time points in each pulse sequence. Default is 100.
-    noise (float): The standard deviation of the noise added to the pulse amplitudes. Default is 1.
+    num_samples (int): The number of pulse samples to generate. Each sample contains two pulses. 
+    seq_length (int): The number of time points in each pulse sequence.
+    noise (float): The standard deviation of the noise added to the pulse amplitudes. 
 
     Returns:
     ndarray: A 3D array of shape (num_samples, seq_length, 2)
@@ -52,11 +70,10 @@ def generate_pulse_data(num_samples=6000, seq_length=100, noise=1):
 
     for _ in range(num_samples):
         phase_shift = np.random.randn(1)
-        w = 1 # + np.random.randn(1)*0.01
-        t = np.linspace(0, 5, seq_length) + phase_shift
+        t = np.linspace(0, 5, seq_len) + phase_shift
 
-        pulse1 = gaussian(t, 1, 0.3) + noise * np.random.randn(seq_length)
-        pulse2 = gaussian(t, 2, 0.3) + noise * np.random.randn(seq_length)
+        pulse1 = gaussian(t, MEAN1, STD1) + noise * np.random.randn(seq_len)
+        pulse2 = gaussian(t, MEAN2, STD2) + noise * np.random.randn(seq_len)
 
         sample = np.stack([pulse1, pulse2], axis=1)
         data.append(sample)
@@ -64,14 +81,14 @@ def generate_pulse_data(num_samples=6000, seq_length=100, noise=1):
     return data
 
 
-def split_data(data, test_size=0.2, random_state=None):
+def split_data(data, test_size=TEST_SIZE, random_state=RANDOM_STATE):
     """
     Splits the input data into training and testing set.
 
     Parameters:
     data (array-like): The input data to be split.
-    test_size (float): The proportion of the data to include in the test split. Default is 0.2.
-    random_state (int, optional): Controls the shuffling applied to the data before the split. Pass an integer for reproducible results.
+    test_size (float): The proportion of the data to include in the test split.
+    random_state (int, optional): Controls the shuffling applied to the data before the split. 
 
     Returns:
     tuple: A tuple containing:
@@ -83,14 +100,14 @@ def split_data(data, test_size=0.2, random_state=None):
     return X_train, y
 
 
-def create_data_loaders(X_train, X_test, batch_size=16, shuffle=True):
+def create_data_loaders(X_train, X_test, batch_size=BATCH_SIZE, shuffle=True):
     """
     Converts training and testing data into PyTorch DataLoader objects.
 
     Parameters:
     X_train (array-like): The training data to be converted into a DataLoader.
     X_test (array-like): The test data to be converted into a DataLoader.
-    batch_size (int): The number of samples per batch to load. Default is 16.
+    batch_size (int): The number of samples per batch to load.
     shuffle (bool): Whether to shuffle the training data at every epoch. Default is True.
 
     Returns:
@@ -110,14 +127,13 @@ def create_data_loaders(X_train, X_test, batch_size=16, shuffle=True):
     return train_loader, test_loader 
 
 
-def split_past_future(batch, num_future_points=10):
+def split_past_future(batch, num_future_points=PRED_LENGTH):
     """
     Splits a batch of time series data into past and future segments.
 
     Parameters:
     batch (ndarray): A batch of time series data of shape (batch_size, sequence_length, num_features).
-    num_future_points (int): The number of future time points to separate from the past. Default is 10.
-
+    num_future_points (int): The number of future time points to separate from the past.
     Returns:
     tuple: A tuple containing:
         - past_values (ndarray): The past segment of the data, with shape (batch_size, sequence_length - num_future_points, num_features).
@@ -130,16 +146,17 @@ def split_past_future(batch, num_future_points=10):
     return past_values, future_values
 
 
-def train_model(model, train_loader, num_future_points=70, num_epochs=20, learning_rate=1e-3):
+
+def train_model(model, train_loader, num_future_points=PRED_LENGTH, num_epochs=NUM_EPOCHS, learning_rate=LEARNING_RATE):
     """
     Trains the model using the provided training data loader.
 
     Parameters:
     model (torch.nn.Module): The model to be trained.
     train_loader (DataLoader): The DataLoader providing batches of training data.
-    num_future_points (int): The number of future time steps the model will predict. Default is 70.
-    num_epochs (int): The number of training epochs. Default is 20.
-    learning_rate (float): The learning rate for the optimizer. Default is 1e-3.
+    num_future_points (int): The number of future time steps the model will predict.
+    num_epochs (int): The number of training epochs.
+    learning_rate (float): The learning rate for the optimizer.
 
     Returns:
     list: A list of parameters (scale and location) for each epoch.
@@ -204,23 +221,24 @@ def train_model(model, train_loader, num_future_points=70, num_epochs=20, learni
     return params_lst
 
 
-def create_model_config(prediction_length=70, context_length=29, num_time_features=1, 
-                        encoder_layers=2, decoder_layers=2, d_model=32, n_heads=4, 
-                        input_size=2, lags_sequence=[1], distribution_output='normal'):
+def create_model_config(prediction_length=PRED_LENGTH, context_length=CONTEXT_LENGTH, num_time_features=NUM_TIME_FEAT, 
+                        encoder_layers=ENC_LAYERS, decoder_layers=DEC_LAYERS, d_model=D_MODEL, n_heads=N_HEADS, 
+                        input_size=INPUT_FEAT, lags_sequence=LAG_SEQ, num_parallel_samples=NUM_SAMPLES, distribution_output=DISTR):
     """
     Creates a configuration for a Time Series Transformer model.
 
     Parameters:
-    prediction_length (int): The number of future time steps the model will predict. Default is 70.
-    context_length (int): The number of past time steps used as context. Default is 29.
-    num_time_features (int): The number of time features used as input. Default is 1.
-    encoder_layers (int): The number of transformer layers in the encoder. Default is 2.
-    decoder_layers (int): The number of transformer layers in the decoder. Default is 2.
-    d_model (int): The dimensionality of the transformer model. Default is 32.
-    n_heads (int): The number of attention heads in the multi-head attention mechanism. Default is 4.
-    input_size (int): The size of the input to the model (number of features per time step). Default is 2.
-    lags_sequence (list): A list of lags to be used in the model. Default is [1].
-    distribution_output (str): The type of distribution for the output. Default is 'normal'.
+    prediction_length (int): The number of future time steps the model will predict
+    context_length (int): The number of past time steps used as context
+    num_time_features (int): The number of time features used as input
+    encoder_layers (int): The number of transformer layers in the encoder
+    decoder_layers (int): The number of transformer layers in the decoder
+    d_model (int): The dimensionality of the transformer model
+    n_heads (int): The number of attention heads in the multi-head attention mechanism
+    input_size (int): The size of the input to the model (number of features per time step)
+    lags_sequence (list): A list of lags to be used in the model
+    num_parallel_samples (int): number of samples to generate for found parameters 
+    distribution_output (str): The type of distribution for the output
 
     Returns:
     TimeSeriesTransformerConfig: The configuration object for the Time Series Transformer model.
@@ -235,6 +253,7 @@ def create_model_config(prediction_length=70, context_length=29, num_time_featur
         n_heads=n_heads,
         input_size=input_size,
         lags_sequence=lags_sequence,
+        num_parallel_samples=num_parallel_samples,
         distribution_output=distribution_output,
     )
     return config
@@ -305,6 +324,7 @@ def plot_pulse_mus(epoch_df, ep=NUM_EPOCHS-1, save_path="mu_over_timepoints.png"
         epoch_df (pd.DataFrame): A DataFrame containing the pulse data across epochs and samples.
         ep (int): The epoch to plot (default is the last epoch).
         save_path (str): The path where the plot will be saved (default is 'pulse_plot.png').
+        plt_sigma (bool): Plot the standard deviation (default is True). 
 
     Returns:
         None
@@ -351,14 +371,14 @@ def plot_pulse_mus(epoch_df, ep=NUM_EPOCHS-1, save_path="mu_over_timepoints.png"
     return pulse1_mus, pulse2_mus
 
 
-def generate_predictions(model, test_loader, prediction_length=70):
+def generate_predictions(model, test_loader, prediction_length=PRED_LENGTH):
     """
     Generates predictions for each batch in the test loader using a trained time series model.
 
     Parameters:
     model (torch.nn.Module): The trained model used to generate predictions.
     test_loader (DataLoader): DataLoader providing batches of test data.
-    prediction_length (int): The number of future time steps to predict. Default is 70.
+    prediction_length (int): The number of future time steps to predict.
 
     Returns:
     list: A list of generated predictions for each batch in the test data.
@@ -402,15 +422,15 @@ def generate_predictions(model, test_loader, prediction_length=70):
     return np.array(generated_predictions)
 
 
-def plot_preds_vs_avg(data_avg, generated_predictions, pl=PREDICTION_LENGTH, plt_grand_mean=True, plt_pulse_mus=True, save_path='preds_vs_avg.png'):
+def plot_preds_vs_avg(data_avg, preds, pulse1_mus, pulse2_mus, pl=PRED_LENGTH, plt_grand_mean=True, plt_pulse_mus=True, save_path='preds_vs_avg.png'):
     """
-    Plots the comparison between predicted and actual values for a specified observation and sample,
-    alongside statistical averages (mean over epochs and overall grand mean).
+    Plots the comparison between average data and the grand mean of the predictions and optionally also the 
+    found parameters. 
 
     Args:
-        data_avg (np.ndarray): The average data values for past and future sine/cosine values.
+        data_avg (np.ndarray): The average data values for past and future values.
         generated_predictions (np.ndarray): Generated prediction values of shape (num_batches, batch_size, samples, seq_length, input_size).
-        pl (int): The prediction length (number of future time steps to plot, default is 70).
+        pl (int): The prediction length.
         plt_grand_mean (bool): Plot mean over predictions and samples (default is True).
         plt_pulse_mus (bool): Plot model parameter mu of a specified epoch (default is True).
     
@@ -418,14 +438,14 @@ def plot_preds_vs_avg(data_avg, generated_predictions, pl=PREDICTION_LENGTH, plt
         None
     """
     # Reshape and calculate the means over different dimensions
-    num_batches, batch_size, samples, seq_length, input_size = generated_predictions.shape
-    generated_predictions = generated_predictions.reshape(num_batches * batch_size, samples, seq_length, input_size)
+    num_batches, batch_size, samples, seq_length, input_size = preds.shape
+    preds = preds.reshape(num_batches * batch_size, samples, seq_length, input_size)
 
     # get the mean over all predictions 
-    mean_over_preds = np.mean(generated_predictions, axis=0)
+    mean_over_preds = np.mean(preds, axis=0)
     
     # get the mean over all samples 
-    mean_over_sampels = np.mean(generated_predictions, axis=1)
+    mean_over_sampels = np.mean(preds, axis=1)
 
     # get the mean over all predictions and all samples 
     grand_mean = np.mean(mean_over_preds, axis=0)
@@ -433,13 +453,9 @@ def plot_preds_vs_avg(data_avg, generated_predictions, pl=PREDICTION_LENGTH, plt
     # Plot settings
     plt.figure(figsize=(10, 6))
 
-    # Plot the average past values
-    plt.plot(np.arange(len(data_avg[:-pl])), data_avg[:-pl, 0], label="Average of the past values")
-    plt.plot(np.arange(len(data_avg[:-pl])), data_avg[:-pl, 1], label="Average of the past values")
-
-    # Plot the average future values
-    plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), data_avg[-pl:, 0], label="Average of future values", linestyle='dashed')
-    plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), data_avg[-pl:, 1], label="Average of future values", linestyle='dashed')
+    # Plot the average values
+    plt.plot(np.arange(len(data_avg)), data_avg[:, 0], label="Average")
+    plt.plot(np.arange(len(data_avg)), data_avg[:, 1], label="Average")
 
     if plt_grand_mean:
         # Plot the mean over all predictions and all samples 
@@ -464,38 +480,55 @@ def plot_preds_vs_avg(data_avg, generated_predictions, pl=PREDICTION_LENGTH, plt
     plt.close()
 
 
-
-
 # generate pulse data 
 data = generate_pulse_data()
 
+
+# get average data 
+data_avg = np.mean(data, axis=0)
+
+
 # split the data into training and test set 
-X_train, y = split_data(data, random_state=RANDOM_STATE)
+X_train, y = split_data(data)
+
 
 # create training and test loader, batch the data 
 train_loader, test_loader = create_data_loaders(X_train, y)
 
+
 # define the configuration of the model 
-config = create_model_config(prediction_length=PREDICTION_LENGTH, context_length=CONTEXT_LENGTH, d_model=D_MODEL, n_heads=N_HEADS)
+config = create_model_config()
+
 
 # initialize the model 
 model = TimeSeriesTransformerForPrediction(config)
 
+
+# initialize the model 
+model = TimeSeriesTransformerForPrediction(config)
+
+
 # train the model
-params = train_model(model, train_loader, num_future_points=PREDICTION_LENGTH, num_epochs=NUM_EPOCHS, learning_rate=LEARNING_RATE)
+params = train_model(model, train_loader)
+
 
 # save the model 
 model.save_pretrained("./saved_model")
 
+
 # arrange the parameters in a pd
 params_df = arrange_params(params)
+
 
 # plot mu over time points of specified epoch 
 pulse1_mus, pulse2_mus = plot_pulse_mus(params_df)
 
-# generate predictions 
-predictions = generate_predictions(model, test_loader, prediction_length=PREDICTION_LENGTH)
 
-# plot average data against average of samples 
-plot_preds_vs_avg(predictions, pulse1_mus, pulse2_mus) 
+# generate predictions 
+predictions = generate_predictions(model, test_loader)
+
+
+# plot predictions against average data 
+plot_preds_vs_avg(data_avg=data_avg, preds=predictions, pulse1_mus=pulse1_mus, pulse2_mus=pulse2_mus) 
+
 
