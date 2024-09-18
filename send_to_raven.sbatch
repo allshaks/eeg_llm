@@ -1,60 +1,55 @@
 #!/bin/bash -l
-#
-# log files (-o output, -e errors), not created automatically.
+
+# Log files (-o output, -e errors).
 #SBATCH -o logs/%j_gpu1_undistr.out.undistr
 #SBATCH -e logs/%j_gpu1_undistr.err.undistr
-# -D is working directory.
+
+# Working directory.
 #SBATCH -D ./
-# -J is the name of the job. when running multiple jobs, helps check how long it takes, where it is in the queue, etc.
+
+# Job name.
 #SBATCH -J training_transformer_on_raw
-#
-# 
+
+# Resources.
 #SBATCH --nodes=1
 #SBATCH --tasks-per-node=1
 #SBATCH --mem=30000
-
-#
-# only gpu nodes
-# kind of gpu (a100 is the name, 1 is the number of gpus you request, in this case we don't use more)
+# Uncomment the next line to use GPU (a100), adjust as needed.
 # --gres=gpu:a100:1
-# if I want to receive notification. "end" means sends notification _to_ the email. you can also set it to "none".
+
+# Email notification settings.
 #SBATCH --mail-type=end
 #SBATCH --mail-user=kammnoel1@gmail.com
-#
-# Wall clock limit (max. is 24 hours), if you need more time you would need to find a way to resume the job:
+
+# Wall clock limit.
 #SBATCH --time=02:00:00
 
-
+# Load environment modules.
 source /etc/profile.d/modules.sh
-# remove all modules that are already loaded
-module purge
+module purge  # Clean all currently loaded modules.
 
+# Load other required modules first.
+module load anaconda/3/2023.03
+module load scikit-learn/1.2.2
+module load pytorch/cpu/2.1.0
+module load huggingface-transformers/4.31.0
 
-module load anaconda/3/2023.03 scikit-learn/1.2.2 pytorch/cpu/2.1.0 huggingface-transformers/4.31.0 
+# Load GCC module last.
+module load gcc/14
+
+# Export compiler variables to use the correct GCC compilers.
+export CC=$(which gcc)
+export CXX=$(which g++)
+
+# Set LDFLAGS to ensure the correct libstdc++ is used.
+export LDFLAGS="$LDFLAGS -L$(gcc --print-file-name=libstdc++.so.6 | sed 's/libstdc++.so.6//') -Wl,-rpath,$(gcc --print-file-name=libstdc++.so.6 | sed 's/libstdc++.so.6//')"
+
+# Activate virtual environment.
 source ${HOME}/venvs/eeg_llm/bin/activate
-pip install transformers 
-pip install torch 
-pip install scikit-learn
-pip install numpy 
-pip install pandas 
-pip install matplotlib 
 
-# pip install --user -e .
-# pip install --user -r ./docs/requirements.txt
-# pip install --user gdown
+# Upgrade pip and install required Python packages.
+pip install --upgrade pip
+pip install transformers torch scikit-learn numpy pandas matplotlib
 
-# --- TF related flags (provided by Tim) ---
-
-# Avoid CUPTI warning message
-# export LD_LIBRARY_PATH=${CUDA_HOME}/extras/CUPTI/lib64:${LD_LIBRARY_PATH}
-
-# # Avoid OOM
-# export TF_FORCE_GPU_ALLOW_GROWTH=true
-
-# ## XLA
-# # cuda aware
-# export XLA_FLAGS="--xla_gpu_cuda_data_dir=${CUDA_HOME}"
-# # enable autoclustering for CPU and GPU
-# export TF_XLA_FLAGS="--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit"
-
-srun python transformer_on_toy_data.py
+# Run your Python script.
+srun python transformer_on_toy_data_clean.py
