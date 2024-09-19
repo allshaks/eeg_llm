@@ -32,7 +32,7 @@ D_MODEL = 64                        # dimension of the model
 N_HEADS = 8                         # number of attention heads
 DISTR = 'normal'                    # output distribution  
 NUM_SAMPLES = 10                    # number of parallel generated samples 
-NUM_EPOCHS = 20                     # number of epochs 
+NUM_EPOCHS = 3                      # number of epochs 
 LEARNING_RATE = 1e-3                # learning rate 
 
 
@@ -370,7 +370,6 @@ def plot_pulse_mus(epoch_df, ep=NUM_EPOCHS-1, save_path="mu_over_timepoints.png"
 
     return pulse1_mus, pulse2_mus
 
-
 def generate_predictions(model, test_loader, prediction_length=PRED_LENGTH):
     """
     Generates predictions for each batch in the test loader using a trained time series model.
@@ -381,45 +380,51 @@ def generate_predictions(model, test_loader, prediction_length=PRED_LENGTH):
     prediction_length (int): The number of future time steps to predict.
 
     Returns:
-    list: A list of generated predictions for each batch in the test data.
-    
+    torch.Tensor: A tensor of generated predictions for the test data.
     """
-    generated_predictions = []
+    generated_predictions = []  # Initialize an empty list to store predictions
 
-    # Iterate over each batch in the test loader
-    for batch in test_loader:
-        # Split the batch into past and future values
-        past_values, future_values = split_past_future(batch[0], num_future_points=prediction_length)
+    # Set model to evaluation mode once before the loop
+    model.eval()
 
-        # Prepare batch input data
-        batch = {
-            "past_values": past_values,  # (batch_size, input_length, input_size)
-            "future_values": future_values,  # (batch_size, prediction_length, input_size)
-            "past_time_features": torch.arange(past_values.size(1)).unsqueeze(0).unsqueeze(2).float().repeat(past_values.size(0), 1, 1),  # (batch_size, seq_length, 1)
-            "past_observed_mask": torch.ones_like(past_values),  # (batch_size, seq_length, input_size)
-            "future_time_features": torch.arange(past_values.size(1), past_values.size(1) + prediction_length).unsqueeze(0).unsqueeze(2).float().repeat(future_values.size(0), 1, 1),  # (batch_size, prediction_length, 1)
-        }
+    # Disable gradient calculations since we're in inference mode
+    with torch.no_grad():
+        # Iterate over each batch in the test loader
+        for batch_idx, batch in enumerate(test_loader):
+            # Split the batch into past and future values
+            past_values, future_values = split_past_future(batch[0], num_future_points=prediction_length)
 
-        # Set model to evaluation mode
-        model.eval()
+            # Prepare batch input data
+            batch_input = {
+                "past_values": past_values,  # (batch_size, input_length, input_size)
+                "future_values": future_values,  # (batch_size, prediction_length, input_size)
+                "past_time_features": torch.arange(past_values.size(1)).unsqueeze(0).unsqueeze(2).float().repeat(past_values.size(0), 1, 1),  # (batch_size, seq_length, 1)
+                "past_observed_mask": torch.ones_like(past_values),  # (batch_size, seq_length, input_size)
+                "future_time_features": torch.arange(
+                    past_values.size(1), past_values.size(1) + prediction_length
+                ).unsqueeze(0).unsqueeze(2).float().repeat(future_values.size(0), 1, 1),  # (batch_size, prediction_length, 1)
+            }
 
-        # Generate predictions without gradient calculation
-        with torch.no_grad():
+            # Generate predictions
             predictions = model.generate(
-                past_values=batch["past_values"],
-                past_time_features=batch["past_time_features"],
-                future_time_features=batch["future_time_features"],
-                past_observed_mask=batch["past_observed_mask"],
+                past_values=batch_input["past_values"],
+                past_time_features=batch_input["past_time_features"],
+                future_time_features=batch_input["future_time_features"],
+                past_observed_mask=batch_input["past_observed_mask"],
             )
 
-        # Collect the generated predictions
-        generated_batch_predictions = predictions.sequences
+            # Collect the generated predictions
+            generated_batch_predictions = predictions.sequences  # Assuming shape: (16, 10, 10, 2)
+            # Optional: only append if batch size matches 16
+            if generated_batch_predictions.shape[0] == 16:
+                generated_predictions.append(generated_batch_predictions)
 
-        # Optional: only append if batch size matches 16
-        if generated_batch_predictions.shape[0] == 16:
-            generated_predictions.append(generated_batch_predictions)
-
-    return np.array(generated_predictions)
+    # After processing all batches, combine the list into a single tensor
+    if generated_predictions:
+        # Option 1: Concatenate along the batch dimension (dim=0)
+        # This will result in a tensor of shape (num_batches * 16, 10, 10, 2)
+        combined_predictions = torch.cat(generated_predictions, dim=0)
+        return combined_predictions
 
 
 def plot_preds_vs_avg(data_avg, preds, pulse1_mus, pulse2_mus, pl=PRED_LENGTH, plt_grand_mean=True, plt_pulse_mus=True, save_path='preds_vs_avg.png'):
@@ -437,15 +442,9 @@ def plot_preds_vs_avg(data_avg, preds, pulse1_mus, pulse2_mus, pl=PRED_LENGTH, p
     Returns:
         None
     """
-    # Reshape and calculate the means over different dimensions
-    num_batches, batch_size, samples, seq_length, input_size = preds.shape
-    preds = preds.reshape(num_batches * batch_size, samples, seq_length, input_size)
-
     # get the mean over all predictions 
+    preds = np.array(preds)
     mean_over_preds = np.mean(preds, axis=0)
-    
-    # get the mean over all samples 
-    mean_over_sampels = np.mean(preds, axis=1)
 
     # get the mean over all predictions and all samples 
     grand_mean = np.mean(mean_over_preds, axis=0)
@@ -483,52 +482,40 @@ def plot_preds_vs_avg(data_avg, preds, pulse1_mus, pulse2_mus, pl=PRED_LENGTH, p
 # generate pulse data 
 data = generate_pulse_data()
 
-
 # get average data 
 data_avg = np.mean(data, axis=0)
-
 
 # split the data into training and test set 
 X_train, y = split_data(data)
 
-
 # create training and test loader, batch the data 
 train_loader, test_loader = create_data_loaders(X_train, y)
-
 
 # define the configuration of the model 
 config = create_model_config()
 
-
 # initialize the model 
 model = TimeSeriesTransformerForPrediction(config)
 
-
 # initialize the model 
 model = TimeSeriesTransformerForPrediction(config)
-
 
 # train the model
 params = train_model(model, train_loader)
 
-
 # save the model 
 model.save_pretrained("./saved_model")
-
 
 # arrange the parameters in a pd
 params_df = arrange_params(params)
 
-
 # plot mu over time points of specified epoch 
 pulse1_mus, pulse2_mus = plot_pulse_mus(params_df)
 
-
 # generate predictions 
-predictions = generate_predictions(model, test_loader)
-
+preds = generate_predictions(model, test_loader)
 
 # plot predictions against average data 
-plot_preds_vs_avg(data_avg=data_avg, preds=predictions, pulse1_mus=pulse1_mus, pulse2_mus=pulse2_mus) 
+plot_preds_vs_avg(data_avg=data_avg, preds=preds, pulse1_mus=pulse1_mus, pulse2_mus=pulse2_mus) 
 
 
