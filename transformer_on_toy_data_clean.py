@@ -377,10 +377,10 @@ def arrange_params(params_lst):
 
             # Update the epoch dictionary for each time point
             for time_point in range(mean.shape[1]):
-                mu_pulse1 = mean[:, time_point, 0].detach().numpy()
-                sigma_pulse1 = std_dev[:, time_point, 0].detach().numpy()
-                mu_pulse2 = mean[:, time_point, 1].detach().numpy()
-                sigma_pulse2 = std_dev[:, time_point, 1].detach().numpy()
+                mu_pulse1 = mean[:, time_point, 0].cpu().detach().numpy()
+                sigma_pulse1 = std_dev[:, time_point, 0].cpu().detach().numpy()
+                mu_pulse2 = mean[:, time_point, 1].cpu().detach().numpy()
+                sigma_pulse2 = std_dev[:, time_point, 1].cpu().detach().numpy()
 
                 # Accumulate values
                 epoch_dict[i, time_point]["mu_pulse1"] += np.mean(mu_pulse1)
@@ -552,6 +552,7 @@ def plot_preds_vs_avg(data_avg, preds, pulse1_mus, pulse2_mus, pl=PRED_LENGTH, p
         None
     """
     # get the mean over all predictions 
+    preds = [pred.cpu().numpy() for pred in preds]
     preds = np.array(preds)
     mean_over_preds = np.mean(preds, axis=0)
 

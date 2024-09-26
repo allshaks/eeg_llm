@@ -15,7 +15,6 @@ class TimeSeriesDataset(Dataset):
             - eeg_file (str): Path to the EEG file (.set) if data_source is "eeg".
             - tmin, tmax (float): Time window for EEG epochs.
             - preload (bool): Whether to preload the EEG data.
-            - context_length (int): Context window for time series.
             - prediction_length (int): Prediction window for time series.
             - seq_len (int): Sequence length for toy data.
             - num_obsv (int): Number of samples for toy data.
@@ -130,6 +129,6 @@ class TimeSeriesDataset(Dataset):
         - past_values (torch.Tensor): The past segment of the data.
         - future_values (torch.Tensor): The future segment of the data.
         """
-        past_values = self.data[idx, :-self.prediction_length, :]
-        future_values = self.data[idx, -self.prediction_length:, :]
-        return torch.tensor(past_values, dtype=torch.float32), torch.tensor(future_values, dtype=torch.float32)s
+        past_values = self.data[idx, :-self.config.get('prediction_length'), :]
+        future_values = self.data[idx, -self.config.get('prediction_length'):, :]
+        return np.array(past_values, dtype=np.float32), np.array(future_values, dtype=np.float32)
