@@ -14,8 +14,7 @@
 #SBATCH --nodes=1
 #SBATCH --tasks-per-node=1
 #SBATCH --mem=30000
-# Uncomment the next line to use GPU (a100), adjust as needed.
-# --gres=gpu:a100:1
+#SBATCH --gres=gpu:a100:1
 
 # Email notification settings.
 #SBATCH --mail-type=end
@@ -30,8 +29,8 @@ module purge  # Clean all currently loaded modules.
 
 # Load other required modules first.
 module load anaconda/3/2023.03
+module load pytorch/gpu-cuda-11.6/2.1.0
 module load scikit-learn/1.2.2
-module load pytorch/cpu/2.0.0
 module load huggingface-transformers/4.31.0
 
 # Load GCC module last.

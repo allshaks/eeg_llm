@@ -12,7 +12,7 @@ import os
 
 
 # define global variables 
-NUM_OBSV = 1000                     # number of generated observations  
+NUM_OBSV = 6000                     # number of generated observations  
 SEQ_LEN = 100                       # length of the sequence 
 NOISE = 1                           # level of noise 
 MEAN1 = 1                           # mean of the first pulse 
@@ -23,8 +23,8 @@ TEST_SIZE = 0.15                    # size of the test set
 VAL_SIZE = 0.15                     # size of the validation set    
 BATCH_SIZE = 16                     # batch size 
 RANDOM_STATE = 42                   # random initialization for reproducability 
-PRED_LENGTH = 10                    # length of the prediction 
-CONTEXT_LENGTH = 89                 # length of the context window 
+PRED_LENGTH = 70                    # length of the prediction 
+CONTEXT_LENGTH = 29                 # length of the context window 
 NUM_TIME_FEAT = 1                   # number of time features 
 ENC_LAYERS = 2                      # number of encoding layers 
 DEC_LAYERS = 2                      # number of decoding layers 
@@ -33,8 +33,8 @@ LAG_SEQ = [1]                       # lag sequence
 D_MODEL = 64                        # dimension of the model 
 N_HEADS = 8                         # number of attention heads
 DISTR = 'normal'                    # output distribution  
-NUM_SAMPLES = 10                    # number of parallel generated samples 
-NUM_EPOCHS = 3                      # number of epochs 
+NUM_SAMPLES = 100                   # number of parallel generated samples 
+NUM_EPOCHS = 20                     # number of epochs 
 LEARNING_RATE = 1e-3                # learning rate 
 CPU = False                         # specify if CPU should be used 
 
