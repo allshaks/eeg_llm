@@ -38,6 +38,16 @@ NUM_EPOCHS = 3                      # number of epochs
 LEARNING_RATE = 1e-3                # learning rate 
 CPU = False                         # specify if CPU should be used 
 
+# define directory structure for saving models and plots 
+root_dir = "./output"
+models_dir = os.path.join(root_dir, "models")
+plots_dir = os.path.join(root_dir, "plots")
+
+# Create directories if they don't exist
+os.makedirs(models_dir, exist_ok=True)
+os.makedirs(plots_dir, exist_ok=True)
+
+
 # Set up the device (GPU or CPU)
 if CPU:
     device = torch.device("cpu")
@@ -165,7 +175,7 @@ def split_past_future(batch, num_future_points=PRED_LENGTH):
 
 
 
-def train_model(model, train_loader, num_future_points=PRED_LENGTH, num_epochs=NUM_EPOCHS, learning_rate=LEARNING_RATE, save_dir="./saved_models"):
+def train_model(model, train_loader, num_future_points=PRED_LENGTH, num_epochs=NUM_EPOCHS, learning_rate=LEARNING_RATE, save_dir=models_dir):
     """
     Trains the model using the provided training data loader.
 
@@ -248,8 +258,21 @@ def train_model(model, train_loader, num_future_points=PRED_LENGTH, num_epochs=N
         with torch.no_grad():
             for batch in val_loader:
                 past_values, future_values = split_past_future(batch[0], num_future_points=num_future_points)
-                past_values, future_values = past_values.to(device), future_values.to(device)
+                past_values = past_values.to(device)
+                future_values = future_values.to(device)
 
+                # Prepare batch data for model input
+                batch = {
+                    "past_values": past_values,  # (batch_size, input_length, input_size)
+                    "future_values": future_values,  # (batch_size, prediction_length, input_size)
+                    "past_time_features": torch.arange(past_values.size(1)).unsqueeze(0).unsqueeze(2).float().repeat(past_values.size(0), 1, 1).to(device),  # (batch_size, seq_length, 1)
+                    "past_observed_mask": torch.ones_like(past_values).to(device),  # (batch_size, seq_length, input_size)
+                    "future_observed_mask": torch.ones_like(future_values).to(device),  # (batch_size, prediction_length, input_size)
+                    "future_time_features": torch.arange(past_values.size(1), past_values.size(1) + num_future_points).unsqueeze(0).unsqueeze(2).float().repeat(future_values.size(0), 1, 1).to(device),  # (batch_size, prediction_length, 1)
+                    "return_dict": True
+                }
+
+                # forward pass 
                 outputs = model(
                     past_values=batch["past_values"],
                     past_time_features=batch["past_time_features"],
@@ -375,7 +398,7 @@ def arrange_params(params_lst):
     return pd.DataFrame(epoch_dict.tolist())
 
 
-def plot_losses(train_losses, val_losses, save_path="train_val_losses.png"):
+def plot_losses(train_losses, val_losses, save_path=os.path.join(plots_dir, "train_val_losses.png")):
     """
     Plots the training and validation losses over epochs.
 
@@ -399,7 +422,7 @@ def plot_losses(train_losses, val_losses, save_path="train_val_losses.png"):
     plt.close()
 
 
-def plot_pulse_mus(epoch_df, ep=NUM_EPOCHS-1, save_path="mu_over_timepoints.png", plot_sigma=True):
+def plot_pulse_mus(epoch_df, ep=NUM_EPOCHS-1, plot_sigma=True, save_path=os.path.join(plots_dir, "mu_over_timepoints.png")):
     """
     Plots the mean and standard deviation of pulse1 and pulse2 across samples for a specified epoch,
     and saves the plot as an image file.
@@ -513,7 +536,7 @@ def generate_predictions(model, test_loader, prediction_length=PRED_LENGTH):
         return combined_predictions
 
 
-def plot_preds_vs_avg(data_avg, preds, pulse1_mus, pulse2_mus, pl=PRED_LENGTH, plt_grand_mean=True, plt_pulse_mus=True, save_path='preds_vs_avg.png'):
+def plot_preds_vs_avg(data_avg, preds, pulse1_mus, pulse2_mus, pl=PRED_LENGTH, plt_grand_mean=True, plt_pulse_mus=True, save_path=os.path.join(plots_dir, "preds_vs_avg.png")):
     """
     Plots the comparison between average data and the grand mean of the predictions and optionally also the 
     found parameters. 
@@ -572,10 +595,10 @@ data = generate_pulse_data()
 data_avg = np.mean(data, axis=0)
 
 # split the data into training and test set 
-X_train, y = split_data(data)
+X_train, X_val, X_test = split_data(data)
 
 # create training and test loader, batch the data 
-train_loader, test_loader = create_data_loaders(X_train, y)
+train_loader, val_loader, test_loader = create_data_loaders(X_train, X_val, X_test)
 
 # define the configuration of the model 
 config = create_model_config()
