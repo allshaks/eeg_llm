@@ -100,6 +100,41 @@ def generate_pulse_data(num_samples=NUM_OBSV, seq_len=SEQ_LEN, noise=NOISE):
     return data
 
 
+def plot_random_observations(data, num_observations=3, save_path=os.path.join(plots_dir, "random_observations.png")):
+    """
+    Plots a specified number of random observations from the dataset.
+
+    Parameters:
+    data (ndarray): The dataset from which to plot the observations (shape: num_samples, seq_length, 2).
+    num_observations (int): The number of random observations to plot.
+    save_path (str): The path where the plot will be saved.
+    """
+    plt.figure(figsize=(10, 6))
+    num_samples = data.shape[0]
+    
+    # Select random indices
+    random_indices = np.random.choice(num_samples, num_observations, replace=False)
+    
+    for i, idx in enumerate(random_indices):
+        observation = data[idx]
+        t = np.arange(observation.shape[0])  # Time steps
+
+        # Plot each pulse (two features per observation)
+        plt.plot(t, observation[:, 0], label=f"Pulse 1 - Obs {i + 1}")
+        # plt.plot(t, observation[:, 1], label=f"Pulse 2 - Obs {i + 1}")
+
+    plt.xlabel('Timepoints')
+    plt.ylabel('Amplitude')
+    plt.title(f'{num_observations} Random Observations')
+    plt.legend()
+    plt.grid(True)
+    
+    # Save the plot
+    plt.savefig(save_path)
+    plt.close()
+
+
+
 def split_data(data, test_size=TEST_SIZE, val_size=VAL_SIZE, random_state=RANDOM_STATE):
     """
     Splits the input data into training and testing set.
@@ -595,37 +630,40 @@ data = generate_pulse_data()
 # get average data 
 data_avg = np.mean(data, axis=0)
 
-# split the data into training and test set 
-X_train, X_val, X_test = split_data(data)
+# plot random observations 
+plot_random_observations(data, num_observations=3)
 
-# create training and test loader, batch the data 
-train_loader, val_loader, test_loader = create_data_loaders(X_train, X_val, X_test)
+# # split the data into training and test set 
+# X_train, X_val, X_test = split_data(data)
 
-# define the configuration of the model 
-config = create_model_config()
+# # create training and test loader, batch the data 
+# train_loader, val_loader, test_loader = create_data_loaders(X_train, X_val, X_test)
 
-# initialize the model 
-model = TimeSeriesTransformerForPrediction(config)
+# # define the configuration of the model 
+# config = create_model_config()
 
-# initialize the model 
-model = TimeSeriesTransformerForPrediction(config).to(device)
+# # initialize the model 
+# model = TimeSeriesTransformerForPrediction(config)
 
-# train the model
-params, train_loss, val_loss = train_model(model, train_loader)
+# # initialize the model 
+# model = TimeSeriesTransformerForPrediction(config).to(device)
 
-# arrange the parameters in a pd
-params_df = arrange_params(params)
+# # train the model
+# params, train_loss, val_loss = train_model(model, train_loader)
 
-# plot train and validation losses 
-plot_losses(train_loss, val_loss)
+# # arrange the parameters in a pd
+# params_df = arrange_params(params)
 
-# plot mu over time points of specified epoch 
-pulse1_mus, pulse2_mus = plot_pulse_mus(params_df)
+# # plot train and validation losses 
+# plot_losses(train_loss, val_loss)
 
-# generate predictions 
-preds = generate_predictions(model, test_loader)
+# # plot mu over time points of specified epoch 
+# pulse1_mus, pulse2_mus = plot_pulse_mus(params_df)
 
-# plot predictions against average data 
-plot_preds_vs_avg(data_avg=data_avg, preds=preds, pulse1_mus=pulse1_mus, pulse2_mus=pulse2_mus) 
+# # generate predictions 
+# preds = generate_predictions(model, test_loader)
+
+# # plot predictions against average data 
+# plot_preds_vs_avg(data_avg=data_avg, preds=preds, pulse1_mus=pulse1_mus, pulse2_mus=pulse2_mus) 
 
 
