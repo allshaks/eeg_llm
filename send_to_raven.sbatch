@@ -31,24 +31,24 @@ module purge  # Clean all currently loaded modules.
 # Load other required modules first.
 module load anaconda/3/2023.03
 module load scikit-learn/1.2.2
-module load pytorch/cpu/2.1.0
+module load pytorch/cpu/2.0.0
 module load huggingface-transformers/4.31.0
 
 # Load GCC module last.
-module load gcc/14
+#module load gcc/14
 
 # Export compiler variables to use the correct GCC compilers.
-export CC=$(which gcc)
-export CXX=$(which g++)
+#export CC=$(which gcc)
+#export CXX=$(which g++)
 
 # Set LDFLAGS to ensure the correct libstdc++ is used.
-export LDFLAGS="$LDFLAGS -L$(gcc --print-file-name=libstdc++.so.6 | sed 's/libstdc++.so.6//') -Wl,-rpath,$(gcc --print-file-name=libstdc++.so.6 | sed 's/libstdc++.so.6//')"
+#export LDFLAGS="$LDFLAGS -L$(gcc --print-file-name=libstdc++.so.6 | sed 's/libstdc++.so.6//') -Wl,-rpath,$(gcc --print-file-name=libstdc++.so.6 | sed 's/libstdc++.so.6//')"
 
 # Activate virtual environment.
 source ${HOME}/venvs/eeg_llm/bin/activate
 
 # Upgrade pip and install required Python packages.
-pip install --upgrade pip
+#pip install --upgrade pip
 pip install transformers torch scikit-learn numpy pandas matplotlib
 
 # Run your Python script.

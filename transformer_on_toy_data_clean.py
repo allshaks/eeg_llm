@@ -8,6 +8,7 @@ import torch
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, TensorDataset
 import pandas as pd 
+import os 
 
 
 # define global variables 
@@ -18,7 +19,8 @@ MEAN1 = 1                           # mean of the first pulse
 STD1 = 0.3                          # standard deviation of the first pulse 
 MEAN2 = 2                           # mean of the second pulse 
 STD2 = 0.3                          # standard deviation of the second pulse 
-TEST_SIZE = 0.2                     # size of the test set 
+TEST_SIZE = 0.15                    # size of the test set 
+VAL_SIZE = 0.15                     # size of the validation set    
 BATCH_SIZE = 16                     # batch size 
 RANDOM_STATE = 42                   # random initialization for reproducability 
 PRED_LENGTH = 10                    # length of the prediction 
@@ -34,6 +36,13 @@ DISTR = 'normal'                    # output distribution
 NUM_SAMPLES = 10                    # number of parallel generated samples 
 NUM_EPOCHS = 3                      # number of epochs 
 LEARNING_RATE = 1e-3                # learning rate 
+CPU = False                         # specify if CPU should be used 
+
+# Set up the device (GPU or CPU)
+if CPU:
+    device = torch.device("cpu")
+else:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def gaussian(t, mean, std):
@@ -81,26 +90,31 @@ def generate_pulse_data(num_samples=NUM_OBSV, seq_len=SEQ_LEN, noise=NOISE):
     return data
 
 
-def split_data(data, test_size=TEST_SIZE, random_state=RANDOM_STATE):
+def split_data(data, test_size=TEST_SIZE, val_size=VAL_SIZE, random_state=RANDOM_STATE):
     """
     Splits the input data into training and testing set.
 
     Parameters:
     data (array-like): The input data to be split.
     test_size (float): The proportion of the data to include in the test split.
+    val_size (float): The proportion of the training data to include in the validation split. 
     random_state (int, optional): Controls the shuffling applied to the data before the split. 
 
     Returns:
     tuple: A tuple containing:
         - X_train (array-like): A 3D array of shape (num_samples - test_size * num_samples, seq_length, 2).
-        - y (array-like): A 3D array of shape (test_size * num_samples, seq_length, 2).
+        - X_val (array-like): A 3D array of shape (num_samples - test_size * val_size * num_samples, seq_length, 2)
+        - X_test (array-like): A 3D array of shape (test_size * num_samples, seq_length, 2).
     """
 
-    X_train, y = train_test_split(data, test_size=test_size, random_state=random_state)
-    return X_train, y
+    X_train, X_test = train_test_split(data, test_size=test_size, random_state=random_state)
+
+    X_train, X_val = train_test_split(X_train, test_size=val_size, random_state=random_state)
+
+    return X_train, X_val, X_test 
 
 
-def create_data_loaders(X_train, X_test, batch_size=BATCH_SIZE, shuffle=True):
+def create_data_loaders(X_train, X_val, X_test, batch_size=BATCH_SIZE, shuffle=True):
     """
     Converts training and testing data into PyTorch DataLoader objects.
 
@@ -116,15 +130,19 @@ def create_data_loaders(X_train, X_test, batch_size=BATCH_SIZE, shuffle=True):
         - test_loader (DataLoader): DataLoader for the test data (shuffling disabled).
     """
     
-    X_train = torch.tensor(X_train, dtype=torch.float32)
-    X_test = torch.tensor(X_test, dtype=torch.float32)
+    X_train = torch.tensor(X_train, dtype=torch.float32).to(device)
+    X_val = torch.tensor(X_val, dtype=torch.float32).to(device)
+    X_test = torch.tensor(X_test, dtype=torch.float32).to(device)
+
     train_dataset = TensorDataset(X_train)
+    val_dataset = TensorDataset(X_val)
     test_dataset = TensorDataset(X_test)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-    return train_loader, test_loader 
+    return train_loader, val_loader, test_loader 
 
 
 def split_past_future(batch, num_future_points=PRED_LENGTH):
@@ -147,7 +165,7 @@ def split_past_future(batch, num_future_points=PRED_LENGTH):
 
 
 
-def train_model(model, train_loader, num_future_points=PRED_LENGTH, num_epochs=NUM_EPOCHS, learning_rate=LEARNING_RATE):
+def train_model(model, train_loader, num_future_points=PRED_LENGTH, num_epochs=NUM_EPOCHS, learning_rate=LEARNING_RATE, save_dir="./saved_models"):
     """
     Trains the model using the provided training data loader.
 
@@ -161,11 +179,20 @@ def train_model(model, train_loader, num_future_points=PRED_LENGTH, num_epochs=N
     Returns:
     list: A list of parameters (scale and location) for each epoch.
     """
+
+    # Create directory to save model checkpoints if it doesn't exist
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
     # Initialize optimizer
     optim = Adam(model.parameters(), lr=learning_rate)
     
     # Store parameters across epochs
     params_lst = []
+
+    # Store the training and validation losses
+    train_losses = []
+    val_losses = []
 
     # Iterate over all epochs
     for epoch in range(num_epochs):
@@ -177,14 +204,16 @@ def train_model(model, train_loader, num_future_points=PRED_LENGTH, num_epochs=N
         for batch in train_loader:
             past_values, future_values = split_past_future(batch[0], num_future_points=num_future_points)
 
+            past_values = past_values.to(device)
+            future_values = future_values.to(device)
             # Prepare batch data for model input
             batch = {
                 "past_values": past_values,  # (batch_size, input_length, input_size)
                 "future_values": future_values,  # (batch_size, prediction_length, input_size)
-                "past_time_features": torch.arange(past_values.size(1)).unsqueeze(0).unsqueeze(2).float().repeat(past_values.size(0), 1, 1),  # (batch_size, seq_length, 1)
-                "past_observed_mask": torch.ones_like(past_values),  # (batch_size, seq_length, input_size)
-                "future_observed_mask": torch.ones_like(future_values),  # (batch_size, prediction_length, input_size)
-                "future_time_features": torch.arange(past_values.size(1), past_values.size(1) + num_future_points).unsqueeze(0).unsqueeze(2).float().repeat(future_values.size(0), 1, 1),  # (batch_size, prediction_length, 1)
+                "past_time_features": torch.arange(past_values.size(1)).unsqueeze(0).unsqueeze(2).float().repeat(past_values.size(0), 1, 1).to(device),  # (batch_size, seq_length, 1)
+                "past_observed_mask": torch.ones_like(past_values).to(device),  # (batch_size, seq_length, input_size)
+                "future_observed_mask": torch.ones_like(future_values).to(device),  # (batch_size, prediction_length, input_size)
+                "future_time_features": torch.arange(past_values.size(1), past_values.size(1) + num_future_points).unsqueeze(0).unsqueeze(2).float().repeat(future_values.size(0), 1, 1).to(device),  # (batch_size, prediction_length, 1)
                 "return_dict": True
             }
 
@@ -214,11 +243,42 @@ def train_model(model, train_loader, num_future_points=PRED_LENGTH, num_epochs=N
 
             total_loss += loss.item()  # Accumulate total loss
 
-        params_lst.append(epoch_params)  # Store parameters for the epoch
-        epoch_loss = total_loss / len(train_loader)  # Calculate average loss for the epoch
-        print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss:.4f}")
+        model.eval()
+        total_val_loss = 0.0
+        with torch.no_grad():
+            for batch in val_loader:
+                past_values, future_values = split_past_future(batch[0], num_future_points=num_future_points)
+                past_values, future_values = past_values.to(device), future_values.to(device)
 
-    return params_lst
+                outputs = model(
+                    past_values=batch["past_values"],
+                    past_time_features=batch["past_time_features"],
+                    past_observed_mask=batch["past_observed_mask"],
+                    future_observed_mask=batch["future_observed_mask"],
+                    future_values=batch["future_values"],
+                    future_time_features=batch["future_time_features"],
+                    return_dict=batch["return_dict"]
+                )
+
+                val_loss = outputs.loss
+                total_val_loss += val_loss.item()
+
+
+        params_lst.append(epoch_params)  # Store parameters for the epoch
+        train_epoch_loss = total_loss / len(train_loader)  # Calculate average training loss for the epoch
+        val_epoch_loss = total_val_loss / len(val_loader)  # Calculate the average validation loss for the epoch 
+
+        print(f"Epoch {epoch + 1}/{num_epochs}, Training Loss: {train_epoch_loss:.4f}, Validation Loss: {val_epoch_loss:.4f}")
+
+        # append train and validation loss 
+        train_losses.append(train_epoch_loss)
+        val_losses.append(val_epoch_loss) 
+
+        # Save the model after each epoch
+        model_save_path = os.path.join(save_dir, f"model_epoch_{epoch + 1}.bin")
+        model.save_pretrained(model_save_path)
+
+    return params_lst, train_losses, val_losses
 
 
 def create_model_config(prediction_length=PRED_LENGTH, context_length=CONTEXT_LENGTH, num_time_features=NUM_TIME_FEAT, 
@@ -315,6 +375,30 @@ def arrange_params(params_lst):
     return pd.DataFrame(epoch_dict.tolist())
 
 
+def plot_losses(train_losses, val_losses, save_path="train_val_losses.png"):
+    """
+    Plots the training and validation losses over epochs.
+
+    Parameters:
+    train_losses (list): List of training losses for each epoch.
+    val_losses (list): List of validation losses for each epoch.
+    """
+    plt.figure(figsize=(10, 6))
+    plt.plot(train_losses, label='Training Loss')
+    plt.plot(val_losses, label='Validation Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.title('Training and Validation Loss over Epochs')
+    plt.legend()
+    plt.grid(True)
+
+    # Save the plot
+    plt.savefig(save_path)
+
+    # Clear the figure to avoid memory issues
+    plt.close()
+
+
 def plot_pulse_mus(epoch_df, ep=NUM_EPOCHS-1, save_path="mu_over_timepoints.png", plot_sigma=True):
     """
     Plots the mean and standard deviation of pulse1 and pulse2 across samples for a specified epoch,
@@ -394,15 +478,17 @@ def generate_predictions(model, test_loader, prediction_length=PRED_LENGTH):
             # Split the batch into past and future values
             past_values, future_values = split_past_future(batch[0], num_future_points=prediction_length)
 
+            past_values = past_values.to(device)
+            future_values = future_values.to(device)
             # Prepare batch input data
             batch_input = {
                 "past_values": past_values,  # (batch_size, input_length, input_size)
                 "future_values": future_values,  # (batch_size, prediction_length, input_size)
-                "past_time_features": torch.arange(past_values.size(1)).unsqueeze(0).unsqueeze(2).float().repeat(past_values.size(0), 1, 1),  # (batch_size, seq_length, 1)
-                "past_observed_mask": torch.ones_like(past_values),  # (batch_size, seq_length, input_size)
+                "past_time_features": torch.arange(past_values.size(1)).unsqueeze(0).unsqueeze(2).float().repeat(past_values.size(0), 1, 1).to(device),  # (batch_size, seq_length, 1)
+                "past_observed_mask": torch.ones_like(past_values).to(device),  # (batch_size, seq_length, input_size)
                 "future_time_features": torch.arange(
                     past_values.size(1), past_values.size(1) + prediction_length
-                ).unsqueeze(0).unsqueeze(2).float().repeat(future_values.size(0), 1, 1),  # (batch_size, prediction_length, 1)
+                ).unsqueeze(0).unsqueeze(2).float().repeat(future_values.size(0), 1, 1).to(device),  # (batch_size, prediction_length, 1)
             }
 
             # Generate predictions
@@ -498,16 +584,16 @@ config = create_model_config()
 model = TimeSeriesTransformerForPrediction(config)
 
 # initialize the model 
-model = TimeSeriesTransformerForPrediction(config)
+model = TimeSeriesTransformerForPrediction(config).to(device)
 
 # train the model
-params = train_model(model, train_loader)
-
-# save the model 
-model.save_pretrained("./saved_model")
+params, train_loss, val_loss = train_model(model, train_loader)
 
 # arrange the parameters in a pd
 params_df = arrange_params(params)
+
+# plot train and validation losses 
+plot_losses(train_loss, val_loss)
 
 # plot mu over time points of specified epoch 
 pulse1_mus, pulse2_mus = plot_pulse_mus(params_df)
