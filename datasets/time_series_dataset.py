@@ -1,7 +1,6 @@
 import torch
 from torch.utils.data import Dataset
 import mne
-import numpy as np
 
 class TimeSeriesDataset(Dataset):
     def __init__(self, config):
@@ -53,19 +52,18 @@ class TimeSeriesDataset(Dataset):
         Generates synthetic toy data.
         """
         def gaussian(t, mean, std):
-            return 1/np.sqrt(2*np.pi*std**2)*np.exp(-(t-mean)**2/(2*std**2))
+            return 1 / torch.sqrt(2 * torch.pi * std**2) * torch.exp(-(t - mean)**2 / (2 * std**2))
 
         data = []
         for _ in range(num_obsv):
-            phase_shift = np.random.randn(1)
-            t = np.linspace(0, 5, seq_len) + phase_shift
+            phase_shift = torch.randn(1)
+            t = torch.linspace(0, 5, seq_len) + phase_shift
+            pulse1 = gaussian(t, mean1, std1) + noise * torch.randn(seq_len)
+            pulse2 = gaussian(t, mean2, std2) + noise * torch.randn(seq_len)
 
-            pulse1 = gaussian(t, mean1, std1) + noise * np.random.randn(seq_len)
-            pulse2 = gaussian(t, mean2, std2) + noise * np.random.randn(seq_len)
-
-            sample = np.stack([pulse1, pulse2], axis=1)
-            data.append(sample)
-        return np.array(data)
+            observation = torch.stack([pulse1, pulse2], dim=1)
+            data.append(observation)
+        return torch.tensor(data)
 
 
     def load_eeg_data(self, eeg_file, tmin, tmax, preload):
@@ -78,7 +76,7 @@ class TimeSeriesDataset(Dataset):
         
         # Get the epoched data
         data_original = epochs.get_data()
-        data = np.transpose(data_original, (0, 2, 1))
+        data = torch.from_numpy(data_original).permute(0, 2, 1)
 
         return data
 
@@ -96,7 +94,7 @@ class TimeSeriesDataset(Dataset):
         Returns a sample of the data set 
         """
 
-        return np.array(self.data[idx], dtype=np.float32)
+        return torch.tensor(self.data[idx], dtype=torch.float32)
     
 
     def get_average_data(self):
@@ -106,7 +104,7 @@ class TimeSeriesDataset(Dataset):
         
         if self.config.get('data_source') == "toy":
             # Calculate the average across all samples for toy data
-            avg_data = np.mean(self.data, axis=0)
+            avg_data = torch.mean(self.data, dim=0)
 
         elif self.config.get('data_source') == "eeg":
             # For EEG data, use MNE's averaging function
@@ -114,7 +112,8 @@ class TimeSeriesDataset(Dataset):
             events, event_id = mne.events_from_annotations(raw)
             epochs = mne.Epochs(raw, events, event_id, self.config.get('tmin'), self.config.get('tmax'), baseline=None, preload=self.config.get('preload'))
             avg_data_original = epochs.average().data
-            avg_data = np.transpose(avg_data_original, (1, 0))
+            avg_data = torch.tensor(avg_data_original).permute(1, 0)
+
         return avg_data
     
 
@@ -131,4 +130,5 @@ class TimeSeriesDataset(Dataset):
         """
         past_values = self.data[idx, :-self.config.get('prediction_length'), :]
         future_values = self.data[idx, -self.config.get('prediction_length'):, :]
-        return np.array(past_values, dtype=np.float32), np.array(future_values, dtype=np.float32)
+
+        return past_values.float(), future_values.float()
