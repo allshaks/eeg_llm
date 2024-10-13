@@ -33,7 +33,7 @@ LAG_SEQ = [1]                       # lag sequence
 D_MODEL = 64                        # dimension of the model 
 N_HEADS = 8                         # number of attention heads
 DISTR = 'normal'                    # output distribution  
-NUM_SAMPLES = 100                   # number of parallel generated samples 
+NUM_SAMPLES = 10#00                   # number of parallel generated samples 
 NUM_EPOCHS = 20                     # number of epochs 
 LEARNING_RATE = 1e-3                # learning rate 
 CPU = False                         # specify if CPU should be used 
@@ -72,7 +72,7 @@ def gaussian(t, mean, std):
 
 
 
-def generate_pulse_data(num_samples=NUM_OBSV, seq_len=SEQ_LEN, noise=NOISE):
+def generate_pulse_data(num_samples=NUM_OBSV, seq_len=SEQ_LEN, noise=NOISE, save_shifts=False):
     """
     Generates synthetic pulse data with time-shifted Gaussian pulses and random noise.
 
@@ -86,7 +86,7 @@ def generate_pulse_data(num_samples=NUM_OBSV, seq_len=SEQ_LEN, noise=NOISE):
     """
 
     data = []
-
+    phase_shifts = []
     for _ in range(num_samples):
         phase_shift = np.random.randn(1)
         t = np.linspace(0, 5, seq_len) + phase_shift
@@ -96,11 +96,18 @@ def generate_pulse_data(num_samples=NUM_OBSV, seq_len=SEQ_LEN, noise=NOISE):
 
         sample = np.stack([pulse1, pulse2], axis=1)
         data.append(sample)
+        if save_shifts:
+            phase_shifts.append(phase_shift)
     data = np.array(data)
+
+    if save_shifts:
+        phase_shifts = np.array(phase_shifts)
+        return data, phase_shifts
+    
     return data
 
 
-def plot_random_observations(data, num_observations=3, save_path=os.path.join(plots_dir, "random_observations.png")):
+def plot_random_observations(data, phase_shifts, num_observations=3, save_path=os.path.join(plots_dir, "random_observations.png")):
     """
     Plots a specified number of random observations from the dataset.
 
@@ -117,10 +124,13 @@ def plot_random_observations(data, num_observations=3, save_path=os.path.join(pl
     
     for i, idx in enumerate(random_indices):
         observation = data[idx]
-        t = np.arange(observation.shape[0])  # Time steps
+        t = np.linspace(0, 5, observation.shape[0])  # Time steps
+
+        noiseless_observation = gaussian(t + phase_shifts[idx], MEAN2, STD2)
 
         # Plot each pulse (two features per observation)
-        plt.plot(t, observation[:, 0], label=f"Pulse 1 - Obs {i + 1}")
+        plt.plot(t, observation[:, 1], label=f"Pulse 2 - Obs {i + 1}")
+        plt.plot(t, noiseless_observation, '-.', label=f"Pulse 2 - Obs {i + 1}")
         # plt.plot(t, observation[:, 1], label=f"Pulse 2 - Obs {i + 1}")
 
     plt.xlabel('Timepoints')
@@ -512,7 +522,7 @@ def plot_pulse_mus(epoch_df, ep=NUM_EPOCHS-1, plot_sigma=True, save_path=os.path
 
     return pulse1_mus, pulse2_mus
 
-def generate_predictions(model, test_loader, prediction_length=PRED_LENGTH):
+def generate_predictions(model, test_loader, prediction_length=PRED_LENGTH, zero_std=False):
     """
     Generates predictions for each batch in the test loader using a trained time series model.
 
@@ -555,6 +565,11 @@ def generate_predictions(model, test_loader, prediction_length=PRED_LENGTH):
                 past_time_features=batch_input["past_time_features"],
                 future_time_features=batch_input["future_time_features"],
                 past_observed_mask=batch_input["past_observed_mask"],
+            ) if not zero_std else model.generate_means(
+                past_values=batch_input["past_values"],
+                past_time_features=batch_input["past_time_features"],
+                future_time_features=batch_input["future_time_features"],
+                past_observed_mask=batch_input["past_observed_mask"],
             )
 
             # Collect the generated predictions
@@ -571,7 +586,7 @@ def generate_predictions(model, test_loader, prediction_length=PRED_LENGTH):
         return combined_predictions
 
 
-def plot_preds_vs_avg(data_avg, preds, pulse1_mus, pulse2_mus, pl=PRED_LENGTH, plt_grand_mean=True, plt_pulse_mus=True, save_path=os.path.join(plots_dir, "preds_vs_avg.png")):
+def plot_preds_vs_avg(data_avg, preds, pulse1_mus=None, pulse2_mus=None, pl=PRED_LENGTH, plt_grand_mean=True, plt_single_sample_mean=True, plt_pulse_mus=True, save_path=os.path.join(plots_dir, "preds_vs_avg.png")):
     """
     Plots the comparison between average data and the grand mean of the predictions and optionally also the 
     found parameters. 
@@ -605,7 +620,10 @@ def plot_preds_vs_avg(data_avg, preds, pulse1_mus, pulse2_mus, pl=PRED_LENGTH, p
         # Plot the mean over all predictions and all samples 
         plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), grand_mean[:, 0], label="Mean over predictions and samples", linestyle="dotted")
         plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), grand_mean[:, 1], label="Mean over predictions and samples", linestyle="dotted")
-    
+    elif plt_single_sample_mean:
+        # Plot the mean over all predictions and all samples 
+        plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), mean_over_preds[0, :, 0], label="Mean over predictions", linestyle="dotted")
+        plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), mean_over_preds[0, :, 1], label="Mean over predictions", linestyle="dotted")
     if plt_pulse_mus:
         # Plot the model parameter mu of a specified epoch 
         plt.plot(np.arange(len(data_avg[:-pl]), len(data_avg[:-pl]) + pl), pulse1_mus, label="Model parameter mu", linestyle="dotted")
@@ -625,45 +643,84 @@ def plot_preds_vs_avg(data_avg, preds, pulse1_mus, pulse2_mus, pl=PRED_LENGTH, p
 
 
 # generate pulse data 
-data = generate_pulse_data()
+data, shifts = generate_pulse_data(save_shifts=True)
 
 # get average data 
 data_avg = np.mean(data, axis=0)
 
 # plot random observations 
-plot_random_observations(data, num_observations=3)
+plot_random_observations(data, shifts, num_observations=3)
 
 # # split the data into training and test set 
-# X_train, X_val, X_test = split_data(data)
+X_train, X_val, X_test = split_data(data)
 
 # # create training and test loader, batch the data 
-# train_loader, val_loader, test_loader = create_data_loaders(X_train, X_val, X_test)
+train_loader, val_loader, test_loader = create_data_loaders(X_train, X_val, X_test)
 
 # # define the configuration of the model 
-# config = create_model_config()
-
+config = create_model_config()
+'''
 # # initialize the model 
 # model = TimeSeriesTransformerForPrediction(config)
 
 # # initialize the model 
-# model = TimeSeriesTransformerForPrediction(config).to(device)
+model = TimeSeriesTransformerForPrediction(config).to(device)
 
 # # train the model
-# params, train_loss, val_loss = train_model(model, train_loader)
+params, train_loss, val_loss = train_model(model, train_loader)
 
 # # arrange the parameters in a pd
-# params_df = arrange_params(params)
+params_df = arrange_params(params)
 
 # # plot train and validation losses 
-# plot_losses(train_loss, val_loss)
+plot_losses(train_loss, val_loss)
 
 # # plot mu over time points of specified epoch 
-# pulse1_mus, pulse2_mus = plot_pulse_mus(params_df)
+pulse1_mus, pulse2_mus = plot_pulse_mus(params_df)
 
 # # generate predictions 
-# preds = generate_predictions(model, test_loader)
+preds = generate_predictions(model, test_loader)
 
 # # plot predictions against average data 
-# plot_preds_vs_avg(data_avg=data_avg, preds=preds, pulse1_mus=pulse1_mus, pulse2_mus=pulse2_mus) 
+plot_preds_vs_avg(data_avg=data_avg, preds=preds, pulse1_mus=pulse1_mus, pulse2_mus=pulse2_mus) 
+'''
 
+model = TimeSeriesTransformerForPrediction.from_pretrained('./output/models/model_epoch_20.bin', local_files_only=True)
 
+# # generate predictions 
+preds = generate_predictions(model, test_loader,zero_std=True)
+
+# # plot predictions against average data 
+# plot_preds_vs_avg(data_avg=data_avg, preds=preds, plt_pulse_mus=False, plt_grand_mean=False)
+plot_preds_vs_avg(data_avg=data_avg, preds=preds, plt_pulse_mus=False, plt_grand_mean=False, save_path=os.path.join(plots_dir, "preds_mu_vs_avg.png"))
+
+# Plot settings
+plt.figure(figsize=(10, 6))
+
+colormaps = ['Reds', 'Greens', 'Blues']  # Define base colormaps for each iteration
+
+for i in range(3):
+    idx = np.random.randint(0, preds.shape[0])
+    t = np.linspace(0, 5, data[idx].shape[0])  # Time steps
+
+    noiseless_observation = gaussian(t + shifts[idx], MEAN2, STD2)
+    
+    # Get the colormap for the current iteration
+    cmap = plt.get_cmap(colormaps[i])
+    # Define positions to get different shades
+    shade_positions = [0.3, 0.6, 0.9]
+    # Get shades from the colormap
+    colors = [cmap(pos) for pos in shade_positions]
+
+    # Plot with different shades of the same color
+    plt.plot(t, data[idx][:, 1], label=f"Second component ({i})", color=colors[0])
+    plt.plot(t, noiseless_observation, 'o', label=f"Noiseless observation ({i})", color=colors[1])
+    plt.plot(t[-PRED_LENGTH:], preds[idx, 0, :, 1], label=f"Prediction ({i})", linestyle="dotted", color=colors[2])
+
+# Add labels, legend, and title
+plt.xlabel('Timepoints')
+plt.ylabel('Values')
+plt.title(f'Average data against prediction')
+plt.legend(loc='upper right')
+
+plt.show()
